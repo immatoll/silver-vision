@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EFC Catalog Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg:       #0d0d0d;
+    --surface:  #111;
+    --surface2: #161616;
+    --border:   #222;
+    --border2:  #2a2a2a;
+    --text:     #c8c8c8;
+    --muted:    #505050;
+    --accent:   #ff7100;
+    --accent2:  #ff9940;
+    --blue:     #5aa8c8;
+    --blue2:    #9ddff8;
+    --red:      #c84040;
+    --red2:     #e06060;
+    --gold:     #a07828;
+}
+
+html, body {
+    height: 100%;
+    font-family: "Segoe UI", sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ── Top bar ── */
+header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border2);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+.header-title { font-size: 15px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; }
+.header-title span { color: var(--accent); }
+.catalog-name-input {
+    flex: 1; min-width: 160px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 12px; padding: 5px 9px;
+    outline: none;
+}
+.catalog-name-input:focus { border-color: rgba(255,113,0,0.4); }
+
+.hdr-btns { display: flex; gap: 7px; margin-left: auto; flex-wrap: wrap; }
+button {
+    font-family: "Segoe UI", sans-serif;
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.btn-primary {
+    background: rgba(255,113,0,0.2);
+    border: 1px solid rgba(255,113,0,0.4);
+    color: var(--accent2);
+    padding: 6px 14px;
+}
+.btn-primary:hover { background: rgba(255,113,0,0.35); }
+.btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    padding: 6px 14px;
+}
+.btn-secondary:hover { border-color: #444; color: var(--text); }
+.btn-blue {
+    background: rgba(43,107,136,0.25);
+    border: 1px solid rgba(60,140,180,0.3);
+    color: var(--blue);
+    padding: 6px 14px;
+}
+.btn-blue:hover { background: rgba(43,107,136,0.45); color: var(--blue2); }
+.btn-danger {
+    background: transparent;
+    border: 1px solid rgba(200,60,60,0.3);
+    color: var(--red2);
+    padding: 4px 10px;
+}
+.btn-danger:hover { background: rgba(180,30,30,0.2); }
+.btn-sm { padding: 4px 8px; font-size: 10px; }
+
+/* ── Toast ── */
+#toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #1a1a1a; border: 1px solid var(--border2);
+    color: var(--text); padding: 8px 18px; border-radius: 4px;
+    font-size: 12px; opacity: 0; transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none; z-index: 999; white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.success { border-color: rgba(255,113,0,0.4); color: var(--accent2); }
+#toast.error   { border-color: rgba(200,60,60,0.4); color: var(--red2); }
+
+/* ── Main layout ── */
+main {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    flex: 1; overflow: hidden;
+    min-height: 0;
+}
+
+/* ── App list sidebar ── */
+#sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border2);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+}
+#sidebar-header {
+    padding: 8px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.sidebar-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted);
+}
+#app-count { font-size: 10px; color: #333; margin-left: 6px; }
+
+#app-list {
+    flex: 1; overflow-y: auto;
+    padding: 4px 0;
+}
+#app-list::-webkit-scrollbar { width: 5px; }
+#app-list::-webkit-scrollbar-track { background: transparent; }
+#app-list::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
+#app-list::-webkit-scrollbar-thumb:hover { background: #333; }
+
+.app-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; cursor: pointer;
+    border-bottom: 1px solid #141414;
+    transition: background 0.1s;
+    user-select: none;
+}
+.app-row:hover   { background: var(--surface2); }
+.app-row.active  { background: #18100a; border-left: 2px solid var(--accent); padding-left: 10px; }
+.app-row-icon    { flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: #606060; }
+.app-row-icon svg, .app-row-icon img { width: 20px; height: 20px; object-fit: contain; }
+.app-row-info    { flex: 1; min-width: 0; }
+.app-row-name    { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #b0b0b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-row.active .app-row-name { color: var(--accent2); }
+.app-row-cat     { font-size: 10px; color: #3a3a3a; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.app-row-badges  { display: flex; gap: 4px; align-items: center; }
+.badge-essential { font-size: 8px; padding: 1px 4px; border-radius: 2px; background: rgba(140,95,20,0.15); border: 1px solid rgba(160,115,35,0.3); color: var(--gold); letter-spacing: 0.5px; text-transform: uppercase; }
+
+.app-row-actions { flex-shrink: 0; display: flex; gap: 2px; }
+.icon-btn {
+    background: none; border: none; color: #333; cursor: pointer;
+    padding: 3px 4px; border-radius: 2px; line-height: 0;
+    transition: color 0.1s, background 0.1s;
+}
+.icon-btn:hover { color: var(--muted); background: rgba(255,255,255,0.05); }
+.icon-btn.danger:hover { color: var(--red2); }
+
+/* ── Editor panel ── */
+#editor {
+    display: flex; flex-direction: column;
+    overflow: hidden; background: var(--bg);
+}
+
+#no-selection {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #2a2a2a; font-size: 12px; gap: 8px; text-align: center; padding: 20px;
+}
+#no-selection svg { opacity: 0.15; }
+
+#editor-form {
+    display: none; flex-direction: column; flex: 1; overflow: hidden;
+}
+
+.editor-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: var(--surface);
+    border-bottom: 1px solid var(--border2);
+    flex-shrink: 0;
+}
+.editor-icon-preview {
+    width: 40px; height: 40px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; overflow: hidden; color: var(--muted);
+}
+.editor-icon-preview svg, .editor-icon-preview img { width: 28px; height: 28px; object-fit: contain; }
+.editor-title { font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text); }
+.editor-actions { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+
+.editor-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.editor-body::-webkit-scrollbar { width: 5px; }
+.editor-body::-webkit-scrollbar-track { background: transparent; }
+.editor-body::-webkit-scrollbar-thumb { background: #1e1e1e; border-radius: 4px; }
+
+.field-row { display: flex; flex-direction: column; gap: 5px; }
+.field-row-inline { display: grid; gap: 12px; }
+.col-2 { grid-template-columns: 1fr 1fr; }
+.col-3 { grid-template-columns: 1fr 1fr 1fr; }
+.col-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #3a3a3a;
+}
+input[type=text], input[type=url], input[type=number], textarea, select {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 3px; color: var(--text);
+    font-family: "Segoe UI", sans-serif;
+    font-size: 12px; padding: 6px 9px; outline: none; width: 100%;
+    transition: border-color 0.1s;
+}
+input:focus, textarea:focus, select:focus { border-color: rgba(255,113,0,0.35); background: rgba(255,255,255,0.04); }
+input.err { border-color: rgba(200,60,60,0.5); }
+textarea { resize: vertical; min-height: 60px; line-height: 1.5; font-size: 11px; }
+select option { background: #1a1a1a; }
+
+.essential-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    background: rgba(255,255,255,0.02); border: 1px solid var(--border);
+    border-radius: 3px; cursor: pointer; user-select: none;
+}
+.essential-row:hover { background: rgba(255,255,255,0.04); }
+.essential-row input { width: auto; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.essential-label { font-size: 11px; color: var(--muted); }
+.essential-label strong { color: var(--gold); }
+
+/* Icon section */
+.icon-area { display: flex; gap: 12px; align-items: flex-start; }
+.icon-textarea { flex: 1; }
+.icon-textarea textarea { font-size: 10px; font-family: "Consolas", monospace; min-height: 80px; }
+.icon-preview-box {
+    flex-shrink: 0; width: 64px; height: 64px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; color: var(--muted);
+}
+.icon-preview-box svg, .icon-preview-box img { width: 44px; height: 44px; object-fit: contain; }
+
+/* ── Divider ── */
+.section-divider {
+    font-size: 9px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; color: #282828;
+    padding: 4px 0; border-bottom: 1px solid #181818;
+    margin-bottom: 2px;
+}
+</style>
+</head>
+<body>
+
+<header>
+    <div class="header-title"><span>EFC</span> Catalog Editor</div>
+    <input id="catalogNameInput" class="catalog-name-input" type="text" placeholder="Catalog name…" value="" title="Catalog display name" />
+    <div class="hdr-btns">
+        <button class="btn-secondary" id="loadBtn">📂 Load JSON</button>
+        <button class="btn-blue" id="addBtn">+ New App</button>
+        <button class="btn-primary" id="saveBtn">💾 Save JSON</button>
+    </div>
+</header>
+
+<main>
+    <!-- Sidebar -->
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <span class="sidebar-title">Apps <span id="app-count">0</span></span>
+        </div>
+        <div id="app-list"></div>
+    </div>
+
+    <!-- Editor -->
+    <div id="editor">
+        <div id="no-selection">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>
+            </svg>
+            <div>Load a catalog.json or select an app to edit.</div>
+        </div>
+
+        <div id="editor-form">
+            <div class="editor-header">
+                <div class="editor-icon-preview" id="headerIconPreview"></div>
+                <div class="editor-title" id="headerTitle">App</div>
+                <div class="editor-actions">
+                    <button class="btn-danger btn-sm" id="deleteAppBtn">Delete App</button>
+                </div>
+            </div>
+            <div class="editor-body">
+                <div class="section-divider">Identity</div>
+                <div class="field-row-inline col-2">
+                    <div class="field-row">
+                        <label for="f-name">Name *</label>
+                        <input id="f-name" type="text" placeholder="App name" />
+                    </div>
+                    <div class="field-row">
+                        <label for="f-category">Category</label>
+                        <input id="f-category" type="text" placeholder="e.g. Navigation, Tools…" list="category-list" />
+                        <datalist id="category-list"></datalist>
+                    </div>
+                </div>
+                <div class="field-row">
+                    <label for="f-url">URL *</label>
+                    <input id="f-url" type="url" placeholder="https://…" />
+                </div>
+                <div class="field-row">
+                    <label for="f-desc">Description</label>
+                    <input id="f-desc" type="text" placeholder="Short description shown in the App Store" />
+                </div>
+
+                <div class="section-divider">Window</div>
+                <div class="field-row-inline col-4">
+                    <div class="field-row">
+                        <label for="f-width">Width</label>
+                        <input id="f-width" type="number" value="800" min="200" max="3840" />
+                    </div>
+                    <div class="field-row">
+                        <label for="f-height">Height</label>
+                        <input id="f-height" type="number" value="600" min="200" max="2160" />
+                    </div>
+                </div>
+
+                <div class="section-divider">Flags</div>
+                <label class="essential-row" id="essentialToggle">
+                    <input type="checkbox" id="f-essential" />
+                    <span class="essential-label">Mark as <strong>★ Essential</strong> — shown with a gold badge in the App Store</span>
+                </label>
+
+                <div class="section-divider">Icon</div>
+                <div class="icon-area">
+                    <div class="icon-textarea field-row">
+                        <label for="f-icon">SVG code or image URL (leave empty for auto-initials)</label>
+                        <textarea id="f-icon" placeholder="<svg xmlns=...>…</svg>  or  https://example.com/icon.png"></textarea>
+                    </div>
+                    <div>
+                        <div style="font-size:10px;color:#333;margin-bottom:5px;letter-spacing:1px;text-transform:uppercase;">Preview</div>
+                        <div class="icon-preview-box" id="iconPreviewBox"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<div id="toast"></div>
+
+<!-- Hidden file input for fallback -->
+<input type="file" id="fileInput" accept=".json" style="display:none" />
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let catalog = { name: 'EFC App Catalog', apps: [] }
+let selectedIndex = -1
+let fileHandle = null
+let unsaved = false
+
+const catalogNameInput = document.getElementById('catalogNameInput')
+const appList          = document.getElementById('app-list')
+const appCount         = document.getElementById('app-count')
+const noSelection      = document.getElementById('no-selection')
+const editorForm       = document.getElementById('editor-form')
+const headerTitle      = document.getElementById('headerTitle')
+const headerIconPreview= document.getElementById('headerIconPreview')
+const iconPreviewBox   = document.getElementById('iconPreviewBox')
+const fName            = document.getElementById('f-name')
+const fUrl             = document.getElementById('f-url')
+const fDesc            = document.getElementById('f-desc')
+const fCategory        = document.getElementById('f-category')
+const fWidth           = document.getElementById('f-width')
+const fHeight          = document.getElementById('f-height')
+const fEssential       = document.getElementById('f-essential')
+const fIcon            = document.getElementById('f-icon')
+const categoryList     = document.getElementById('category-list')
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer
+function toast(msg, type = '') {
+    const el = document.getElementById('toast')
+    el.textContent = msg
+    el.className = 'show' + (type ? ' ' + type : '')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => { el.className = '' }, 2600)
+}
+
+// ── Icon helpers ──────────────────────────────────────────────────────────────
+function makeInitialsSVG(name, size = 44) {
+    const words = (name || '?').trim().split(/[\s|_\-\.\/]+/).filter(Boolean)
+    const initials = words.length >= 2
+        ? (words[0][0] + words[1][0]).toUpperCase()
+        : (name || '?').slice(0, 2).toUpperCase()
+    return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${size}" height="${size}" rx="${Math.round(size*0.18)}" fill="#606060" opacity="0.15"/>
+        <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" fill="#909090"
+              font-size="${Math.round(size*0.38)}" font-family="Segoe UI,sans-serif" font-weight="700">${initials}</text>
+    </svg>`
+}
+
+function renderIconInto(container, iconStr, appName) {
+    container.innerHTML = ''
+    const icon = (iconStr || '').trim()
+    if (icon.startsWith('<svg')) {
+        container.innerHTML = icon
+        const s = container.querySelector('svg')
+        if (s) { s.style.width = '100%'; s.style.height = '100%' }
+    } else if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:image/')) {
+        const img = document.createElement('img')
+        img.src = icon
+        img.alt = ''
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain;'
+        img.onerror = () => { container.innerHTML = makeInitialsSVG(appName) }
+        container.appendChild(img)
+    } else {
+        container.innerHTML = makeInitialsSVG(appName)
+    }
+}
+
+// ── Category datalist ─────────────────────────────────────────────────────────
+function refreshCategoryList() {
+    const cats = [...new Set(catalog.apps.map(a => a.category).filter(Boolean))].sort()
+    categoryList.innerHTML = cats.map(c => `<option value="${c.replace(/"/g,'&quot;')}">`).join('')
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function buildSidebarRow(app, idx) {
+    const row = document.createElement('div')
+    row.className = 'app-row' + (idx === selectedIndex ? ' active' : '')
+    row.dataset.idx = idx
+
+    // Icon
+    const iconWrap = document.createElement('div')
+    iconWrap.className = 'app-row-icon'
+    renderIconInto(iconWrap, app.icon, app.name)
+
+    // Info
+    const info = document.createElement('div')
+    info.className = 'app-row-info'
+    const nameEl = document.createElement('div')
+    nameEl.className = 'app-row-name'
+    nameEl.textContent = app.name || '(unnamed)'
+    info.appendChild(nameEl)
+    if (app.category) {
+        const catEl = document.createElement('div')
+        catEl.className = 'app-row-cat'
+        catEl.textContent = app.category
+        info.appendChild(catEl)
+    }
+
+    // Badges
+    const badges = document.createElement('div')
+    badges.className = 'app-row-badges'
+    if (app.essential) {
+        const b = document.createElement('div')
+        b.className = 'badge-essential'
+        b.textContent = '★'
+        badges.appendChild(b)
+    }
+
+    // Reorder actions
+    const acts = document.createElement('div')
+    acts.className = 'app-row-actions'
+    acts.innerHTML = `
+        <button class="icon-btn" data-action="up" title="Move up">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button class="icon-btn" data-action="down" title="Move down">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+    `
+
+    row.appendChild(iconWrap)
+    row.appendChild(info)
+    row.appendChild(badges)
+    row.appendChild(acts)
+
+    row.addEventListener('click', e => {
+        if (e.target.closest('[data-action]')) return
+        selectApp(idx)
+    })
+
+    acts.querySelector('[data-action="up"]').addEventListener('click', e => {
+        e.stopPropagation(); moveApp(idx, -1)
+    })
+    acts.querySelector('[data-action="down"]').addEventListener('click', e => {
+        e.stopPropagation(); moveApp(idx, 1)
+    })
+
+    return row
+}
+
+function renderSidebar() {
+    appList.innerHTML = ''
+    catalog.apps.forEach((app, idx) => appList.appendChild(buildSidebarRow(app, idx)))
+    appCount.textContent = catalog.apps.length
+    refreshCategoryList()
+}
+
+// ── Select / editor ───────────────────────────────────────────────────────────
+function selectApp(idx) {
+    // Save current edits first
+    if (selectedIndex >= 0 && selectedIndex < catalog.apps.length) flushForm()
+
+    selectedIndex = idx
+    renderSidebar()
+
+    if (idx < 0 || idx >= catalog.apps.length) {
+        noSelection.style.display = ''
+        editorForm.style.display = 'none'
+        return
+    }
+
+    const app = catalog.apps[idx]
+    noSelection.style.display = 'none'
+    editorForm.style.display = 'flex'
+
+    fName.value     = app.name        || ''
+    fUrl.value      = app.url         || ''
+    fDesc.value     = app.description || ''
+    fCategory.value = app.category    || ''
+    fWidth.value    = app.width       || 800
+    fHeight.value   = app.height      || 600
+    fEssential.checked = !!app.essential
+    fIcon.value     = app.icon        || ''
+
+    fName.classList.remove('err')
+    fUrl.classList.remove('err')
+
+    headerTitle.textContent = app.name || '(unnamed)'
+    renderIconInto(headerIconPreview, app.icon, app.name)
+    renderIconInto(iconPreviewBox, app.icon, app.name)
+}
+
+function flushForm() {
+    if (selectedIndex < 0 || selectedIndex >= catalog.apps.length) return
+    const app = catalog.apps[selectedIndex]
+    app.name        = fName.value.trim()
+    app.url         = fUrl.value.trim()
+    app.description = fDesc.value.trim()
+    app.category    = fCategory.value.trim()
+    app.width       = Math.max(200, Math.min(3840, parseInt(fWidth.value) || 800))
+    app.height      = Math.max(200, Math.min(2160, parseInt(fHeight.value) || 600))
+    app.essential   = fEssential.checked || undefined
+    if (!app.essential) delete app.essential
+    app.icon = fIcon.value.trim()
+    markUnsaved()
+}
+
+function markUnsaved() {
+    unsaved = true
+    document.title = '● EFC Catalog Editor'
+}
+
+// ── Live icon preview ─────────────────────────────────────────────────────────
+let iconDebounce
+fIcon.addEventListener('input', () => {
+    clearTimeout(iconDebounce)
+    iconDebounce = setTimeout(() => {
+        const name = fName.value.trim() || '?'
+        renderIconInto(iconPreviewBox, fIcon.value.trim(), name)
+        renderIconInto(headerIconPreview, fIcon.value.trim(), name)
+    }, 300)
+})
+
+// Update header title live
+fName.addEventListener('input', () => {
+    headerTitle.textContent = fName.value.trim() || '(unnamed)'
+    if (!fIcon.value.trim()) {
+        renderIconInto(headerIconPreview, '', fName.value.trim())
+        renderIconInto(iconPreviewBox, '', fName.value.trim())
+    }
+})
+
+// Auto-flush on any input
+;[fName, fUrl, fDesc, fCategory, fWidth, fHeight, fIcon].forEach(el => {
+    el.addEventListener('change', () => { flushForm(); renderSidebar() })
+})
+fEssential.addEventListener('change', () => { flushForm(); renderSidebar() })
+
+// ── Move app ──────────────────────────────────────────────────────────────────
+function moveApp(idx, dir) {
+    flushForm()
+    const newIdx = idx + dir
+    if (newIdx < 0 || newIdx >= catalog.apps.length) return
+    const arr = catalog.apps
+    ;[arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]]
+    selectedIndex = newIdx
+    markUnsaved()
+    renderSidebar()
+    selectApp(newIdx)
+}
+
+// ── Add / delete ──────────────────────────────────────────────────────────────
+document.getElementById('addBtn').addEventListener('click', () => {
+    flushForm()
+    catalog.apps.push({ name: 'New App', url: '', description: '', category: '', width: 800, height: 600, icon: '' })
+    markUnsaved()
+    renderSidebar()
+    selectApp(catalog.apps.length - 1)
+    // Scroll newly added item into view
+    const rows = appList.querySelectorAll('.app-row')
+    rows[rows.length - 1]?.scrollIntoView({ block: 'nearest' })
+    fName.select()
+})
+
+document.getElementById('deleteAppBtn').addEventListener('click', () => {
+    if (selectedIndex < 0) return
+    const name = catalog.apps[selectedIndex]?.name || 'this app'
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return
+    catalog.apps.splice(selectedIndex, 1)
+    markUnsaved()
+    const newSel = Math.min(selectedIndex, catalog.apps.length - 1)
+    selectedIndex = -1
+    renderSidebar()
+    selectApp(newSel)
+})
+
+// ── Catalog name ──────────────────────────────────────────────────────────────
+catalogNameInput.addEventListener('input', () => { catalog.name = catalogNameInput.value; markUnsaved() })
+
+// ── Load / Save ───────────────────────────────────────────────────────────────
+async function loadFromText(text, sourceHandle) {
+    let data
+    try { data = JSON.parse(text) } catch {
+        toast('Invalid JSON — could not parse file.', 'error'); return
+    }
+    if (!Array.isArray(data.apps)) {
+        toast('catalog.json must have an "apps" array.', 'error'); return
+    }
+    catalog = data
+    fileHandle = sourceHandle || null
+    catalogNameInput.value = catalog.name || ''
+    selectedIndex = -1
+    renderSidebar()
+    noSelection.style.display = ''
+    editorForm.style.display = 'none'
+    unsaved = false
+    document.title = 'EFC Catalog Editor'
+    toast(`Loaded ${catalog.apps.length} apps.`, 'success')
+}
+
+document.getElementById('loadBtn').addEventListener('click', async () => {
+    if (unsaved && !confirm('You have unsaved changes. Load anyway?')) return
+    if (window.showOpenFilePicker) {
+        try {
+            const [handle] = await window.showOpenFilePicker({
+                types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+                startIn: 'desktop'
+            })
+            fileHandle = handle
+            const file = await handle.getFile()
+            loadFromText(await file.text(), handle)
+        } catch (e) {
+            if (e.name !== 'AbortError') toast('Failed to open file.', 'error')
+        }
+    } else {
+        document.getElementById('fileInput').click()
+    }
+})
+
+document.getElementById('fileInput').addEventListener('change', async e => {
+    const file = e.target.files[0]
+    if (!file) return
+    loadFromText(await file.text(), null)
+    e.target.value = ''
+})
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+    if (selectedIndex >= 0) flushForm()
+    // Validate
+    let errs = []
+    catalog.apps.forEach((app, i) => {
+        if (!app.name) errs.push(`App #${i+1}: name is required.`)
+        if (!app.url)  errs.push(`App #${i+1} (${app.name || '?'}): URL is required.`)
+    })
+    if (errs.length) { toast(errs[0], 'error'); return }
+
+    const json = JSON.stringify(catalog, null, 2)
+
+    if (fileHandle) {
+        try {
+            const writable = await fileHandle.createWritable()
+            await writable.write(json)
+            await writable.close()
+            unsaved = false
+            document.title = 'EFC Catalog Editor'
+            toast('Saved.', 'success')
+            return
+        } catch(e) {
+            if (e.name !== 'AbortError') toast('Could not write file — trying download.', 'error')
+        }
+    }
+    // Fallback: download
+    const blob = new Blob([json], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'catalog.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    unsaved = false
+    document.title = 'EFC Catalog Editor'
+    toast('Downloaded catalog.json', 'success')
+})
+
+// ── Guard unsaved ─────────────────────────────────────────────────────────────
+window.addEventListener('beforeunload', e => {
+    if (unsaved) { e.preventDefault(); e.returnValue = '' }
+})
+
+// ── Auto-load catalog.json if in same directory (for Electron / local file) ──
+;(async () => {
+    // Only works in Electron's file:// context with nodeIntegration, or if
+    // running via a local dev server co-located with catalog.json
+    try {
+        const fs   = require('fs')
+        const path = require('path')
+        const p = path.join(__dirname, 'catalog.json')
+        const text = fs.readFileSync(p, 'utf8')
+        // Create a pseudo-handle that writes back via fs
+        const pseudoHandle = {
+            _path: p,
+            getFile: async () => ({ text: async () => text }),
+            createWritable: async () => ({
+                write: async (data) => { fs.writeFileSync(p, data, 'utf8') },
+                close: async () => {}
+            })
+        }
+        loadFromText(text, pseudoHandle)
+    } catch(_) {
+        // Not in Electron — manual load required
+    }
+})()
+</script>
+</body>
+</html>

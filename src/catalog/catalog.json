@@ -1,0 +1,109 @@
+{
+  "name": "Eve Frontier Catalog",
+  "apps": [
+    {
+      "name": "EF-MAP.COM",
+      "url": "https://ef-map.com/",
+      "description": "Third-party Everfront map",
+      "category": "Navigation",
+      "icon": "<svg id='Layer_1' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'><defs><style>.cls-1{fill:#fff;}</style></defs><rect width='1024' height='1024'/><polygon class='cls-1' points='501.91 180.18 501.91 256.18 251.91 256.18 251.91 318.18 486.91 318.18 450.91 391.18 251.91 391.18 251.91 451.18 501.91 451.18 501.91 524.18 177.91 524.18 177.91 180.18 501.91 180.18'/><polygon class='cls-1' points='878.91 180.18 840.91 256.18 611.91 256.18 611.91 318.18 824.91 318.18 788.41 391.18 611.91 391.18 611.91 524.18 537.91 524.18 537.91 180.18 878.91 180.18'/><path class='cls-1' d='M244.91,578.18l49.99,111,49.01-111h67v215h-50v-141l-63.61,141.06-8.27-.18-62.11-138.88v139h-49v-213.5c0-.3-1.27-.77-1-1.5h68Z'/><path class='cls-1' d='M723.91,727.18v66h-50v-215h154.5c18.36,0,39.97,17.8,44.8,35.2,4.4,15.82,4.47,68.32-1.11,83.49-4.89,13.27-24.21,30.31-38.69,30.31h-109.5ZM723.91,683.18h86.5c3.24,0,10.7-3.39,13.04-5.96,5.66-6.2,5.15-26.15,4.49-34.58-.75-9.53-4.77-16.55-14.79-18.21-3.42-.57-9.15-1.1-12.7-1.3-25.01-1.43-51.39,1.15-76.54.04v60Z'/><path class='cls-1' d='M659.91,793.18h-52l-14.24-36.26-2.78-3.22-95.32-.36-16.66,39.84h-54l86.49-214.01,62.07-1.71,86.44,215.72ZM573.91,706.18l-30.99-75-29.01,75h60Z'/></svg>",
+      "width": 1000,
+      "height": 1000,
+      "essential": true
+    },
+    {
+      "name": "EVE|DATACO.RE",
+      "url": "https://evedataco.re/",
+      "description": "Character and market database",
+      "category": "Database",
+      "icon": "https://evedataco.re/web-app-manifest-512x512_rounded.png",
+      "width": 1000,
+      "height": 1000,
+      "essential": true
+    },
+    {
+      "name": "Cradle OS",
+      "url": "https://www.cradleos.io/",
+      "description": "CradleOS is the command infrastructure that makes that possible in EVE Frontier.",
+      "category": "Command",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://zaelbllclkxjgibdswrj.supabase.co/storage/v1/object/public/projects/60469d54-4439-4a42-b536-9ec6e27a0d62/8c7a92d8-4d3d-4d76-822f-8304d599741d.png"
+    },
+    {
+      "name": "Shadow Broker Protocol",
+      "url": "https://sb-protocol.com/",
+      "description": "Encrypted audio intelligence marketplace for EVE Frontier. Teaser-before-purchase, atomic settlement in EVE, holder-only decryption via Walrus + Seal + Sui.",
+      "category": "Market",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://sb-protocol.com/assets/branding/shadow-broker-logo.png"
+    },
+    {
+      "name": "CivilizationControl",
+      "url": "https://civilizationcontrol.com/",
+      "description": "CivilizationControl is the governance command layer for EVE Frontier infrastructure. It turns raw on-chain structure control into a usable browser interface, so players can govern gates, trade posts, turrets, and network topology without writing Move code or hand-building transactions.",
+      "category": "Command",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://civilizationcontrol.com/assets/civilizationcontrol-logo-d0sKSomw.png"
+    },
+    {
+      "name": "EF.Space Dapp Directory",
+      "url": "https://evefrontier.space/directory/",
+      "description": "evefrontier.space dApp directory",
+      "category": "Info",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://zaelbllclkxjgibdswrj.supabase.co/storage/v1/object/public/projects/2e17ee98-a080-4a0b-b6b0-f81cb72de0bc/84cd710c-16b9-48ee-9b20-abe28fdf97c1.png"
+    },
+    {
+      "name": "Trinary Exchange",
+      "url": "https://trinary.exchange/",
+      "description": "Join Trinary Exchange - an EVE Frontier item marketplace. Restore order from entropy in the Frontier by establishing your own player-led trade hub.",
+      "category": "Market",
+      "width": 1000,
+      "height": 1000,
+      "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\" fill=\"currentColor\"><g transform=\"translate(109.71,0) scale(3.65714)\"><rect x=\"0\" y=\"10\" width=\"20\" height=\"120\" rx=\"1\" fill=\"#888b8e\"></rect><rect x=\"28\" y=\"0\" width=\"24\" height=\"140\" rx=\"1\" fill=\"#c24c0b\"></rect><rect x=\"60\" y=\"10\" width=\"20\" height=\"120\" rx=\"1\" fill=\"#888b8e\"></rect></g></svg>"
+    },
+    {
+      "name": "Frontier Flow",
+      "url": "https://frontier-flow.scetrov.live/",
+      "description": "Visual low-code programming interface for EVE Frontier game automation. Drag-and-drop nodes to build Sui Move smart contracts.",
+      "category": "Tool",
+      "width": 800,
+      "height": 600,
+      "icon": "https://frontier.scetrov.live/images/frontier-flow-logo.png"
+    },
+    {
+      "name": "Youtube",
+      "url": "https://www.youtube.com",
+      "description": "Videoportal by Google Inc.",
+      "category": "Video",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/YouTube_full-color_icon_%282017%29.svg/330px-YouTube_full-color_icon_%282017%29.svg.png",
+      "essential": true
+    },
+    {
+      "name": "SilverLink",
+      "url": "https://app.silver-tribe.com",
+      "description": "SilverLink - Shared storage access and gate control",
+      "category": "Command",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://test.silver-tribe.com/apple-touch-icon.png",
+      "essential": true
+    },
+    {
+      "name": "Discord",
+      "url": "https://discord.com/login",
+      "description": "Discord is an instant messaging and VoIP social platform that allows communication through voice calls, video calls, text messaging, and media.",
+      "category": "Communication",
+      "width": 1000,
+      "height": 1000,
+      "icon": "https://images-eds-ssl.xboxlive.com/image?url=4rt9.lXDC4H_93laV1_eHM0OYfiFeMI2p9MWie0CvL99U4GA1gf6_kayTt_kBblFwHwo8BW8JXlqfnYxKPmmBevsdZpJiIhrXJKvOSYipsYbqdUBBn6r6Hb.keWYwuyu5QJ84NCtr5ij3JMrlPglnBeeDch3kJBTCQneZnfl9dA-&format=source",
+      "essential": true
+    }
+  ]
+}

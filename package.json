@@ -1,0 +1,51 @@
+{
+  "name": "SilverVision",
+  "version": "0.1.0",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "build": "electron-vite build",
+    "exe": "electron-vite build && electron-builder",
+    "start": "node scripts/dev.js"
+  },
+  "build": {
+    "appId": "com.silvervision.id",
+    "productName": "SilverVision",
+    "files": [
+      "dist/**",
+      "apps/**",
+      "src/catalog/catalog.json",
+      "fonts/**",
+      "assets/**",
+      "extension/**"
+    ],
+    "asarUnpack": [
+      "apps/**",
+      "src/catalog/catalog.json",
+      "fonts/**",
+      "assets/**",
+      "extension/**"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "@fontsource/chakra-petch": "^5.3.0",
+    "marked": "^17.0.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^3.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0"
+  }
+}

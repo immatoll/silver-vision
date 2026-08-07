@@ -1,0 +1,1 @@
+import{j as i}from"./queryClient-CK47WD1X.js";import{S as o}from"./SignTransactionFlow-D4m22iyD.js";function g(){return i.jsx(o,{title:"Sign Transaction",onSign:async({bytes:t,signature:n},r)=>{if(!await r({status:"signed",bytes:t,signature:n}))throw new Error("Failed to record the signing result. Please try again.")}})}export{g as S};

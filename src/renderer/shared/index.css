@@ -1,0 +1,165 @@
+@import "tailwindcss";
+@import "@fontsource/chakra-petch/400.css";
+@import "@fontsource/chakra-petch/500.css";
+@import "@fontsource/chakra-petch/600.css";
+@import "@fontsource/chakra-petch/700.css";
+
+/* Tell Tailwind v4 to scan ALL renderer components for utility classes.
+   Without this, multi-entry Vite builds may only scan the first CSS importer. */
+@source "../";
+
+/* ── Custom font ─────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Exo2";
+  src: url("../../fonts/Exo2-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Exo2";
+  src: url("../../fonts/Exo2-Italic-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: italic;
+}
+
+/* ── Tailwind v4 theme ────────────────────────────────────────────────────── */
+/* silver-link's EVE Frontier HUD look: neutral steel-grey/near-black with a
+   single amber/orange accent used sparingly (active tabs, badges) instead of
+   a blue-teal SaaS palette. */
+@theme {
+  --font-sans: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+
+  /* Lighter dark HUD palette — still the same EVE Frontier grey/amber
+     identity as before, just lifted a couple steps off pure black so text
+     and borders read clearly instead of sinking into the background. */
+  --color-efc-bg: #191b1e;
+  --color-efc-bg-alt: #131518;
+  --color-efc-surface: #202226;
+  --color-efc-surface2: #262a2e;
+  --color-efc-border: #3d4045;
+  --color-efc-border-strong: #45484d;
+  --color-efc-border-subtle: #2a2d31;
+  --color-efc-border-dark: #2a2d31;
+  --color-efc-text: #e4e4e4;
+  --color-efc-text-muted: #a8a8a8;
+  --color-efc-text-dim: #7a7a7a;
+  --color-efc-text-faint: #3d4045;
+  --color-efc-accent: #ff9640;
+  --color-efc-accent-bright: #ffbd7a;
+  /* Solid (non-transparent) dark accent fill — active tabs, checked-toggle
+     track. Use `efc-accent/NN` opacity-modifier syntax instead for anything
+     that should show the surface color underneath (hover tints, dim
+     backgrounds); this one is only for spots that need to stay opaque. */
+  --color-efc-accent-deep: #2c1a08;
+  --color-efc-blue: #a8a8a8;
+  --color-efc-blue-bright: #e4e4e4;
+  --color-efc-red: #e08a8a;
+  --color-efc-red-bright: #eba8a8;
+  --color-efc-red-deep: #331a1a;
+  --color-efc-gold: #dfb877;
+  --color-efc-success: #7fc088;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+/* box-sizing only — DO NOT put margin/padding resets here as unlayered rules
+   override @layer utilities, which would break all Tailwind spacing classes.
+   Tailwind's Preflight (inside @layer base) already resets margin/padding. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  background: transparent;
+  color: var(--color-efc-text);
+  letter-spacing: 0.2px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+#root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-efc-text-faint);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-efc-text-dim);
+}
+* {
+  scrollbar-color: var(--color-efc-border) transparent;
+  scrollbar-width: thin;
+}
+
+/* ── Electron drag region utilities ─────────────────────────────────────── */
+@layer utilities {
+  .drag {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* ── Select / option dark theme ──────────────────────────────────────────── */
+select,
+option {
+  background: var(--color-efc-bg);
+  color: var(--color-efc-text);
+}
+
+/* ── Interactive affordances ─────────────────────────────────────────────
+   Native <button>s don't get a pointer cursor from the browser by default
+   (unlike <a href>) — set it globally instead of chasing every button's
+   className. Layered into `base` so any component's own Tailwind hover/
+   color utilities (higher-priority `utilities` layer) still win outright;
+   this only fills in the baseline for elements that don't specify one. */
+@layer base {
+  button:not(:disabled),
+  a[href],
+  [role="button"],
+  select,
+  .cursor-pointer {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  button,
+  a,
+  [role="button"] {
+    transition:
+      color 100ms ease,
+      background-color 100ms ease,
+      border-color 100ms ease,
+      opacity 100ms ease;
+  }
+
+  a[href]:hover {
+    color: var(--color-efc-accent-bright);
+  }
+}
