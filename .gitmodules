@@ -1,0 +1,3 @@
+[submodule "vendor/evevault"]
+	path = vendor/evevault
+	url = https://github.com/evefrontier/evevault
