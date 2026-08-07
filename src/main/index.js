@@ -1085,7 +1085,7 @@ function openExtensionWindow(url, opts = {}) {
       session: session.fromPartition('persist:overlay'),
       contextIsolation: false,
       nodeIntegration: false,
-      devTools: true,
+      devTools: AUTO_OPEN_OVERLAY_DEVTOOLS,
       preload: path.join(__dirname, '../preload/extension.js')
     }
   })
@@ -1107,7 +1107,7 @@ function openExtensionWindow(url, opts = {}) {
           width: 560, height: 680, alwaysOnTop: true, show: false,
           webPreferences: {
             session: session.fromPartition('persist:overlay'),
-            contextIsolation: false, nodeIntegration: false, devTools: true
+            contextIsolation: false, nodeIntegration: false, devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
           }
         }
       }
@@ -1122,9 +1122,6 @@ function openExtensionWindow(url, opts = {}) {
     _oauthPopupWindow = childWin
     childWin.on('closed', () => { if (_oauthPopupWindow === childWin) _oauthPopupWindow = null })
   })
-  // Always-on diagnostics for these windows while the sign flow is broken —
-  // not gated behind AUTO_OPEN_OVERLAY_DEVTOOLS, so there's no env var to
-  // remember to set. DevTools open detached automatically on every load.
   win.webContents.on('did-start-loading', () => {
     console.log('[EFC] vault window did-start-loading:', url)
   })
@@ -1133,7 +1130,9 @@ function openExtensionWindow(url, opts = {}) {
   })
   win.webContents.on('did-finish-load', () => {
     console.log('[EFC] vault window did-finish-load:', win.webContents.getURL())
-    try { win.webContents.openDevTools({ mode: 'detach' }) } catch (_) {}
+    if (AUTO_OPEN_OVERLAY_DEVTOOLS) {
+      try { win.webContents.openDevTools({ mode: 'detach' }) } catch (_) {}
+    }
   })
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     console.log('[EFC] vault window console:', { level, message, line, sourceId, url: win.webContents.getURL() })
