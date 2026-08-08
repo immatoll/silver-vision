@@ -12,6 +12,12 @@ type, a new IPC surface, a new gotcha with Electron/WebContentsView/the
 bundled extension) add a short section here describing it. Skip this for
 small fixes/tweaks — this file is for orientation, not a changelog.
 
+See [`../silver-agent/AGENTS.md`](../silver-agent/AGENTS.md)
+for conventions shared across this and the other Silver Tribe
+projects — current Sui SDK packages/banned imports, PTB patterns, TS/
+React conventions (applicable to `src/renderer/*`), and deployment
+discipline.
+
 ## Directory layout
 
 ```
