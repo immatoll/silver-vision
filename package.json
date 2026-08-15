@@ -6,7 +6,8 @@
     "dev": "node scripts/dev.js",
     "build": "electron-vite build",
     "exe": "electron-vite build && electron-builder",
-    "start": "node scripts/dev.js"
+    "start": "node scripts/dev.js",
+    "test": "node --test test/*.test.js"
   },
   "build": {
     "appId": "com.silvervision.id",
@@ -47,11 +48,5 @@
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0"
-  },
-  "allowScripts": {
-    "electron@41.0.4": true,
-    "esbuild@0.25.12": true,
-    "fsevents@2.3.3": true,
-    "electron-winstaller@5.4.0": true
   }
 }

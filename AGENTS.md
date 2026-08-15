@@ -31,6 +31,7 @@ src/
                                (window.electronAPI — see this file for the full IPC surface)
     extension.js              — preload for EveVault popup/sign-flow windows (contextIsolation: false)
     keeper.js                  — preload for the hidden keeper window (background message relay)
+    overlay.js                 — request-id tracker for remote dApp WebContentsViews; exposes no page API
   renderer/
     menu/                        — the main pinned launcher window (app icons/folders)
     appstore/                     — catalog browser window (fetches/parses catalog.json or a remote one)
@@ -129,14 +130,23 @@ sync if you add a fifth store.
   the `extension/eve-vault-0.14/` folder contents.
 
 **`extension:relayTabMessage`** exists because Electron's
-`chrome.tabs.sendMessage` doesn't address `WebContentsView`-hosted
-content as a tab — the extension's own delivery path silently no-ops,
-so a transaction can succeed while the dApp page never hears about it
-and hangs in a "working" state. The main process bypasses this by
-`executeJavaScript`-injecting the equivalent `window.postMessage`
-directly into every open overlay's content view, mirroring what the
-extension's own `content.ts` would have sent. If EveVault's messaging
-contract changes upstream, this relay needs to be updated to match.
+`chrome.tabs.sendMessage` doesn't reliably address `WebContentsView`-hosted
+content as a tab. `src/preload/overlay.js` records each public Wallet
+Standard request id at document start; the main process validates EveVault's
+public response shape, routes it only to that request's content view, and
+waits for the page to observe the equivalent `window.postMessage` before the
+keeper confirms delivery to the extension background shim. Chain-change
+events are the only responses broadcast to all overlays. Keep the validator
+and the compatibility shim at the start of the bundled `background.js` in
+sync with EveVault's `content.ts`/`tabMessaging.ts` contract.
+
+The keeper also installs a SilverVision-owned approval recovery listener from
+`src/main/eve-vault-approval-recovery.js`. If the Manifest V3 background
+worker misses the popup's `transactionResult` storage event, the persistent
+keeper validates it against `pendingAction`, sends the same public response
+through `extension:relayTabMessage`, and removes both records only after the
+originating page confirms delivery. This intentionally lives in SilverVision,
+not either EveVault copy.
 
 **OAuth redirects** (`*.chromiumapp.org/*`) are intercepted at the
 `webRequest.onBeforeRequest` level on both the overlay session and the
