@@ -150,6 +150,7 @@ export default function App() {
   const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [appStoreOpen, setAppStoreOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [vaultLoaded, setVaultLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -168,6 +169,8 @@ export default function App() {
     api.menu.onSettingsClosed(() => setSettingsOpen(false));
     api.menu.onAppStoreOpened(() => setAppStoreOpen(true));
     api.menu.onAppStoreClosed(() => setAppStoreOpen(false));
+    api.menu.onBrowserOpened(() => setBrowserOpen(true));
+    api.menu.onBrowserClosed(() => setBrowserOpen(false));
     api.menu.onOverlayOpened((key) =>
       setActiveKeys((prev) => new Set([...prev, key])),
     );
@@ -232,6 +235,21 @@ export default function App() {
           Silver<span className="text-efc-accent">Vision</span>
         </div>
         <div className="flex items-center gap-1.5 no-drag">
+          <svg
+            onClick={() => api.menu.openBrowser()}
+            className={`w-5 h-5 cursor-pointer transition-opacity duration-100 ${browserOpen ? "opacity-100 text-efc-accent" : "opacity-50 hover:opacity-100"}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <title>Browser</title>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18" />
+            <path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z" />
+          </svg>
           <svg
             onClick={() => api.menu.openAppStore()}
             className={`w-5 h-5 cursor-pointer transition-opacity duration-100 ${appStoreOpen ? "opacity-100 text-efc-accent" : "opacity-50 hover:opacity-100"}`}

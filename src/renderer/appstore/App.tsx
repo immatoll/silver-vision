@@ -129,16 +129,11 @@ function AppCard({
 }
 
 // -- Custom app type -----------------------------------------------------------
+// Stored in userData (via api.appstore.*), not localStorage — so it's shared
+// across windows (the browser toolbar's "add as app" writes here too) and
+// survives settings:clearAll like every other persisted store.
 interface CustomApp extends CatalogApp {
   id: string
-}
-
-const CUSTOM_KEY = 'si_custom_apps'
-function loadCustomApps(): CustomApp[] {
-  try { return JSON.parse(localStorage.getItem(CUSTOM_KEY) || '[]') } catch { return [] }
-}
-function saveCustomApps(list: CustomApp[]) {
-  localStorage.setItem(CUSTOM_KEY, JSON.stringify(list || []))
 }
 
 // -- Custom form ---------------------------------------------------------------
@@ -147,6 +142,39 @@ interface CustomFormState {
   width: string; height: string; category: string
 }
 const FORM_EMPTY: CustomFormState = { name: '', url: '', icon: '', description: '', width: '1000', height: '1000', category: '' }
+
+// -- Floating form panel ---------------------------------------------------
+// Overlays the list instead of pushing it down — a DOM/CSS version of the
+// same "popup" treatment built for the overlay-window opacity settings
+// panel (fade+scale-in, elevation shadow, floats over the content below
+// it). That one needed a separate WebContentsView with main-process-driven
+// bounds since it floats above a page in a different renderer; here
+// everything lives in one React tree, so plain position:absolute + a CSS
+// transition does the same job with far less machinery.
+function CustomFormPanel({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setMounted(true)))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  return (
+    <div className="absolute left-0 right-0 z-10 px-2 pt-2" style={{ top: '100%', pointerEvents: 'none' }}>
+      <div
+        className="rounded-lg border border-efc-border-strong bg-efc-bg overflow-hidden"
+        style={{
+          pointerEvents: 'auto',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3)',
+          transformOrigin: 'top',
+          opacity: mounted ? 1 : 0,
+          transform: mounted ? 'scale(1) translateY(0)' : 'scale(0.97) translateY(-6px)',
+          transition: 'opacity 120ms ease-out, transform 120ms ease-out'
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
 
 function CustomForm({
   initial, onSave, onCancel, onPreview
@@ -175,7 +203,7 @@ function CustomForm({
     }`
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-3 bg-efc-bg border-b border-efc-border">
+    <div className="flex flex-col gap-2 px-3 py-3">
       <div className="flex flex-col gap-1">
         <label className="text-[11px] font-bold tracking-[1px] uppercase text-efc-text-muted">Name *</label>
         <input className={inputCls(errors.name)} value={form.name} onChange={e => set('name', e.target.value)} placeholder="App name" />
@@ -239,7 +267,7 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState('all')
 
   // Custom tab state
-  const [customApps, setCustomApps]         = useState<CustomApp[]>(() => loadCustomApps())
+  const [customApps, setCustomApps]         = useState<CustomApp[]>([])
   const [showForm, setShowForm]             = useState(false)
   const [editingApp, setEditingApp]         = useState<CustomApp | null>(null)
 
@@ -263,6 +291,11 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadCatalog() }, [loadCatalog])
+
+  useEffect(() => {
+    api.appstore.getCustomApps().then(setCustomApps).catch(() => {})
+    api.appstore.onCustomAppsChanged(setCustomApps)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleAdd(app: CatalogApp | CustomApp) {
     const res = await api.menu.addCustomItem({
@@ -317,35 +350,23 @@ export default function App() {
     return entries
   })()
 
-  // Custom tab helpers
-  function saveCustom(list: CustomApp[]) { saveCustomApps(list); setCustomApps([...list]) }
-
   async function handleSaveForm(data: CustomFormState) {
-    const app: CustomApp = {
-      id: editingApp?.id ?? (Date.now().toString(36) + Math.random().toString(36).slice(2)),
+    const app: Partial<CustomApp> = {
+      id: editingApp?.id,
       name: data.name.trim(), url: data.url.trim(),
       icon: data.icon.trim(), description: data.description.trim(),
       width: Math.max(200, Math.min(3840, parseInt(data.width) || 1000)),
       height: Math.max(200, Math.min(2160, parseInt(data.height) || 1000)),
       category: data.category.trim() || 'Custom',
     }
-    const list = loadCustomApps()
-    if (editingApp) {
-      const idx = list.findIndex(a => a.id === editingApp.id)
-      if (idx !== -1) {
-        // Update menu item if it was added
-        if (addedUrls.has(editingApp.url)) {
-          await api.menu.removeCustomItem(editingApp.url)
-          setAddedUrls(prev => { const n = new Set(prev); n.delete(editingApp.url); return n })
-          await api.menu.addCustomItem({ name: app.name, url: app.url, icon: app.icon, width: app.width, height: app.height, category: app.category })
-          setAddedUrls(prev => new Set([...prev, app.url]))
-        }
-        list[idx] = app
-      }
-    } else {
-      list.push(app)
+    const res = await api.appstore.upsertCustomApp(app)
+    if (editingApp && res.ok && addedUrls.has(editingApp.url)) {
+      // Update the corresponding menu item if this custom app was added
+      await api.menu.removeCustomItem(editingApp.url)
+      setAddedUrls(prev => { const n = new Set(prev); n.delete(editingApp.url); return n })
+      await api.menu.addCustomItem({ name: app.name, url: app.url, icon: app.icon, width: app.width, height: app.height, category: app.category })
+      setAddedUrls(prev => new Set([...prev, app.url!]))
     }
-    saveCustom(list)
     setShowForm(false); setEditingApp(null)
   }
 
@@ -371,52 +392,61 @@ export default function App() {
       </div>
 
       <div className="flex flex-col flex-1 min-h-0 bg-efc-bg border-x border-b border-efc-border">
-        {/* Search + filter bar */}
-        <div className="flex items-center gap-2 px-3 py-2 bg-efc-bg border-b border-efc-border flex-shrink-0">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-efc-text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-            className="flex-1 bg-transparent border-none text-efc-text text-[13px] outline-none placeholder-efc-text-dim"
-            placeholder="Search apps..." autoComplete="off" spellCheck={false}
-          />
-          {search && (
-            <button onClick={() => { setSearch(''); searchRef.current?.focus() }}
-              className="text-efc-text-muted hover:text-efc-text-muted text-[16px] leading-none bg-none border-none cursor-pointer">&times;</button>
-          )}
-          {catalogStatus === 'ok' && (
-            <>
-              <div className="w-px h-[13px] bg-efc-border flex-shrink-0" />
-              {categories.length > 0 && (
-                <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className={selectCls}>
-                  <option value="all">All Categories</option>
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              )}
-            </>
-          )}
-          <div className="w-px h-[13px] bg-efc-border flex-shrink-0" />
-          <button onClick={() => { setEditingApp(null); setShowForm(true) }}
-            className="flex-shrink-0 text-[11px] font-bold tracking-[1px] uppercase px-2.5 py-1 bg-efc-blue/20 border border-efc-blue/25 text-efc-blue rounded-sm hover:bg-efc-blue/40 hover:text-efc-blue-bright transition-all">
-            Add
-          </button>
-        </div>
+        {/* Search + filter bar — position:relative anchor for the floating
+            add-app panel below, so the panel sits right under THIS bar
+            specifically rather than at the top of the whole content area. */}
+        <div className="flex-shrink-0" style={{ position: 'relative' }}>
+          <div className="flex items-center gap-2 px-3 py-2 bg-efc-bg border-b border-efc-border">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-efc-text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+              className="flex-1 bg-transparent border-none text-efc-text text-[13px] outline-none placeholder-efc-text-dim"
+              placeholder="Search apps..." autoComplete="off" spellCheck={false}
+            />
+            {search && (
+              <button onClick={() => { setSearch(''); searchRef.current?.focus() }}
+                className="text-efc-text-muted hover:text-efc-text-muted text-[16px] leading-none bg-none border-none cursor-pointer">&times;</button>
+            )}
+            {catalogStatus === 'ok' && (
+              <>
+                <div className="w-px h-[13px] bg-efc-border flex-shrink-0" />
+                {categories.length > 0 && (
+                  <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className={selectCls}>
+                    <option value="all">All Categories</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                )}
+              </>
+            )}
+            <div className="w-px h-[13px] bg-efc-border flex-shrink-0" />
+            <button onClick={() => { setEditingApp(null); setShowForm(true) }}
+              className="flex-shrink-0 text-[11px] font-bold tracking-[1px] uppercase px-2.5 py-1 bg-efc-blue/20 border border-efc-blue/25 text-efc-blue rounded-sm hover:bg-efc-blue/40 hover:text-efc-blue-bright transition-all">
+              Add
+            </button>
+          </div>
 
-        {/* App form, when adding/editing a custom app */}
-        {showForm && (
-          <CustomForm
-            initial={editingApp ? {
-              name: editingApp.name, url: editingApp.url, icon: editingApp.icon || '',
-              description: editingApp.description || '', width: String(editingApp.width || 1000),
-              height: String(editingApp.height || 1000), category: editingApp.category || ''
-            } : undefined}
-            onSave={handleSaveForm}
-            onCancel={() => { setShowForm(false); setEditingApp(null) }}
-            onPreview={data => api.menu.openOverlay({ title: data.name || 'Preview', url: data.url, width: parseInt(data.width) || 1000, height: parseInt(data.height) || 1000 })}
-          />
-        )}
+          {/* App form, when adding/editing a custom app — floats below the
+              search/filter bar like a popup (same treatment as the
+              overlay-window opacity settings panel) instead of pushing the
+              list down. */}
+          {showForm && (
+            <CustomFormPanel>
+              <CustomForm
+                initial={editingApp ? {
+                  name: editingApp.name, url: editingApp.url, icon: editingApp.icon || '',
+                  description: editingApp.description || '', width: String(editingApp.width || 1000),
+                  height: String(editingApp.height || 1000), category: editingApp.category || ''
+                } : undefined}
+                onSave={handleSaveForm}
+                onCancel={() => { setShowForm(false); setEditingApp(null) }}
+                onPreview={data => api.menu.openOverlay({ title: data.name || 'Preview', url: data.url, width: parseInt(data.width) || 1000, height: parseInt(data.height) || 1000 })}
+              />
+            </CustomFormPanel>
+          )}
+        </div>
 
         {/* Catalog + custom apps, one continuous scroll */}
         <div className="flex-1 overflow-y-auto min-h-0">
@@ -451,7 +481,7 @@ export default function App() {
                     <button onClick={async () => {
                       const customApp = app
                       if (addedUrls.has(customApp.url)) { await api.menu.removeCustomItem(customApp.url); setAddedUrls(prev => { const n = new Set(prev); n.delete(customApp.url); return n }) }
-                      saveCustom(loadCustomApps().filter(a => a.id !== customApp.id))
+                      await api.appstore.removeCustomApp(customApp.id)
                     }} title="Delete"
                       className="p-1 border border-transparent rounded-sm text-efc-text-muted hover:text-efc-red hover:border-efc-red/30 hover:bg-efc-red/5 transition-all duration-100">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

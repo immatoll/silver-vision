@@ -44,4 +44,24 @@ export interface AppConfig {
   focusGuardMs:        number
   closeOverlaysOnExit: boolean
   eveVaultEnabled:     boolean
+  theme:               'dark' | 'light'
+}
+
+export interface CustomApp extends CatalogApp {
+  id: string
+}
+
+export interface BrowserTab {
+  id:           string
+  url:          string
+  title:        string
+  favicon:      string
+  isLoading:    boolean
+  canGoBack:    boolean
+  canGoForward: boolean
+}
+
+export interface BrowserTabsState {
+  activeTabId: string | null
+  tabs:        BrowserTab[]
 }

@@ -175,7 +175,7 @@ npm run build   # electron-vite build
 npm run exe     # electron-vite build && electron-builder — packaged Windows NSIS installer
 ```
 
-`AUTO_OPEN_OVERLAY_DEVTOOLS=1` env var auto-opens devtools (detached) on
+`SILVERVISION_AUTO_OPEN_OVERLAY_DEVTOOLS=1` env var auto-opens devtools (detached) on
 every overlay/keeper/vault window at creation — useful when debugging
 the extension bridge, noisy otherwise.
 

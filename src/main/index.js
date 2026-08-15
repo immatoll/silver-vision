@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, net, screen, session, webContents, WebContentsView } = require('electron')
+const { app, BrowserWindow, ipcMain, net, screen, session, shell, webContents, WebContentsView } = require('electron')
 const fs   = require('fs')
 const path = require('path')
 const { pathToFileURL } = require('url')
@@ -7,18 +7,64 @@ const { createEveVaultApprovalRecoveryScript } = require('./eve-vault-approval-r
 const EXTENSION_PATH = path.join(__dirname, '../../extension', 'eve-vault-0.14')
   .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
 let _eveVaultExtId = null
-const AUTO_OPEN_OVERLAY_DEVTOOLS = process.env.EFC_AUTO_OPEN_OVERLAY_DEVTOOLS === '1'
+const AUTO_OPEN_OVERLAY_DEVTOOLS = process.env.SILVERVISION_AUTO_OPEN_OVERLAY_DEVTOOLS === '1'
 
 const TITLEBAR_HEIGHT  = 32
 const SETTINGS_PANEL_W = 220
 const SETTINGS_PANEL_H = 116
+// Extra margin around the panel's visual bounds so its CSS drop shadow has
+// room to render without being clipped by the WebContentsView's own edge —
+// WebContentsView content is hard-clipped to its bounds rectangle, so the
+// shadow allowance has to be baked into the bounds, not just the CSS.
+const SETTINGS_PANEL_SHADOW_MARGIN = 16
+const SETTINGS_PANEL_GAP = 6 // small floating gap below the titlebar
+const SETTINGS_PANEL_RIGHT_INSET = 10 // real gap from the window's right edge
+
+// Chrome/Chromium-derived starting values — tunable, not exact specs.
+const BROWSER_TAB_STRIP_HEIGHT = 36
+const BROWSER_TOOLBAR_HEIGHT   = 40
+const BROWSER_CHROME_HEIGHT    = TITLEBAR_HEIGHT + BROWSER_TAB_STRIP_HEIGHT + BROWSER_TOOLBAR_HEIGHT
+const BROWSER_KEY        = '__browser'
+const BROWSER_HOME_URL   = 'https://app.silver-tribe.com'
+const BROWSER_SEARCH_URL = 'https://www.google.com/search?q='
+// Sentinel "URL" for a fresh, unnavigated tab — stored/persisted like any
+// other tab.url, but resolves to the local browserNewTab renderer instead of
+// a real network request, and the toolbar shows an empty omnibox for it
+// rather than this internal string.
+const BROWSER_NEW_TAB_URL = 'silvervision://new-tab'
+
+// Bounds for the settings panel's WebContentsView when visible, anchored to
+// the top-right of the window below the titlebar/toolbar (chromeHeight),
+// inflated by SETTINGS_PANEL_SHADOW_MARGIN on every side so the panel's CSS
+// drop shadow has room to render — the panel's own CSS insets its visible
+// card by that same margin so the two line up.
+function settingsPanelBounds(windowWidth, chromeHeight) {
+  const m = SETTINGS_PANEL_SHADOW_MARGIN
+  return {
+    x: Math.max(0, windowWidth - SETTINGS_PANEL_W - SETTINGS_PANEL_RIGHT_INSET - m),
+    y: chromeHeight + SETTINGS_PANEL_GAP - m,
+    width: SETTINGS_PANEL_W + m * 2,
+    height: SETTINGS_PANEL_H + m * 2
+  }
+}
 
 const overlayContentViews  = new Map()
 const settingsOverlayViews = new Map()
+const browserToolbarViews  = new Map() // win.id -> WebContentsView
+const browserTabState      = new Map() // win.id -> { tabs: [{id,view,url,title,favicon,isLoading}], activeTabId }
+
+// Registry of every WebContentsView that can host a dApp for EveVault relay
+// purposes — one entry per regular overlay's _contentView AND per browser
+// tab's view. Keyed by webContents.id (unique per view), NOT win.id, since a
+// browser window hosts multiple tab views under one win.id. This is separate
+// from overlayContentViews (which stays win.id-keyed and is used only for
+// window-level bounds/collapse bookkeeping).
+const eveVaultViews = new Map() // webContentsId -> { view, windowId }
 
 let menuWindow     = null
 let settingsWindow = null
 let appStoreWindow = null
+let browserWindow  = null
 let _vaultPopupWindow  = null
 let _keeperWindow      = null
 let _oauthPopupWindow  = null
@@ -59,6 +105,16 @@ function resolveOverlayUrl(url) {
     url.startsWith('file://')
   ) return url
   return pathToFileURL(path.join(app.getAppPath(), url)).toString()
+}
+
+// Turn omnibox input into a navigable URL: pass through real URLs, add
+// https:// to bare-looking hosts, otherwise treat it as a Google search.
+function resolveBrowserInput(input) {
+  const trimmed = (input || '').trim()
+  if (!trimmed) return BROWSER_HOME_URL
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed
+  if (/^[^\s]+\.[^\s]{2,}(\/.*)?$/.test(trimmed) && !trimmed.includes(' ')) return `https://${trimmed}`
+  return BROWSER_SEARCH_URL + encodeURIComponent(trimmed)
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +164,7 @@ function createKeeperWindow(extId) {
     `)
     keeperMessageBridge
       .then(() => _keeperWindow.webContents.executeJavaScript(createEveVaultApprovalRecoveryScript()))
-      .catch(e => console.error('[EFC] Failed to inject keeper integration:', e))
+      .catch(e => console.error('[SilverVision] Failed to inject keeper integration:', e))
   })
   _keeperWindow.on('closed', () => { _keeperWindow = null })
 }
@@ -149,7 +205,8 @@ const CONFIG_DEFAULTS = {
   defaultOpacityMax:   1.0,
   focusGuardMs:        500,
   closeOverlaysOnExit: true,
-  eveVaultEnabled:     false
+  eveVaultEnabled:     false,
+  theme:               'dark'
 }
 
 function getConfig() {
@@ -190,6 +247,38 @@ function getCustomItems() {
 function saveCustomItems(items) {
   _itemsCache = items
   try { fs.writeFileSync(getItemsPath(), JSON.stringify(items, null, 2)) } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// App Store's user-authored catalog entries ("Custom" tab) — was App Store
+// localStorage only (per-window, lost on clearAll, unreachable from other
+// windows); moved to userData so the browser toolbar's "add as app" can also
+// register an entry here, not just in custom-items.json.
+// ---------------------------------------------------------------------------
+let _catalogCustomAppsPath  = null
+let _catalogCustomAppsCache = null
+
+function getCatalogCustomAppsPath() {
+  if (!_catalogCustomAppsPath) _catalogCustomAppsPath = path.join(app.getPath('userData'), 'catalog-custom-apps.json')
+  return _catalogCustomAppsPath
+}
+
+function getCatalogCustomApps() {
+  if (_catalogCustomAppsCache !== null) return _catalogCustomAppsCache
+  try { _catalogCustomAppsCache = JSON.parse(fs.readFileSync(getCatalogCustomAppsPath(), 'utf8')) }
+  catch (_) { _catalogCustomAppsCache = [] }
+  return _catalogCustomAppsCache
+}
+
+function saveCatalogCustomApps(apps) {
+  _catalogCustomAppsCache = apps
+  try { fs.writeFileSync(getCatalogCustomAppsPath(), JSON.stringify(apps, null, 2)) } catch (_) {}
+}
+
+function notifyCatalogCustomApps() {
+  if (appStoreWindow && !appStoreWindow.isDestroyed()) {
+    try { appStoreWindow.webContents.send('appstore:customAppsChanged', getCatalogCustomApps()) } catch (_) {}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,17 +378,14 @@ function isAllowedEveVaultPageResponse(message) {
 }
 
 function getOverlayEntryByWebContents(sender) {
-  for (const [windowId, entry] of overlayContentViews) {
-    if (entry.view?.webContents === sender) return { windowId, entry }
-  }
-  return null
+  return getOverlayEntryByWebContentsId(sender?.id)
 }
 
 function getOverlayEntryByWebContentsId(webContentsId) {
-  for (const [windowId, entry] of overlayContentViews) {
-    if (entry.view?.webContents?.id === webContentsId) return { windowId, entry }
-  }
-  return null
+  if (!Number.isInteger(webContentsId)) return null
+  const entry = eveVaultViews.get(webContentsId)
+  if (!entry) return null
+  return { windowId: entry.windowId, entry }
 }
 
 function getPageOrigin(url) {
@@ -571,6 +657,50 @@ function setupAlwaysOnTopBehavior(win) {
   })
 }
 
+// Plays a brief "pop in" on a freshly created window — fades opacity in and
+// grows from a slightly smaller/offset rect to its real bounds, using the
+// same setInterval+smoothstep technique the fade controllers already use for
+// opacity (BrowserWindow bounds/opacity aren't natively CSS-animatable, so
+// this is a manual per-frame tween, not a real "animation API"). Call once,
+// right after a window is created — NOT on every focus/show, so windows that
+// just get re-focused instead of recreated (overlay/browser dedup-by-key)
+// naturally don't replay it.
+function playWindowOpenAnimation(win, targetOpacity = 1, durationMs = 170, onDone) {
+  let finalBounds
+  try { finalBounds = win.getBounds() } catch (_) { if (onDone) onDone(); return }
+  const shrink = 10 // px inset on each side at the start of the animation
+  const startBounds = {
+    x: finalBounds.x + shrink,
+    y: finalBounds.y + shrink,
+    width: Math.max(1, finalBounds.width - shrink * 2),
+    height: Math.max(1, finalBounds.height - shrink * 2)
+  }
+  const smoothstep = (t) => t * t * (3 - 2 * t)
+  try { win.setOpacity(0) } catch (_) { if (onDone) onDone(); return }
+  try { win.setBounds(startBounds) } catch (_) {}
+
+  const t0 = Date.now()
+  const timer = setInterval(() => {
+    if (win.isDestroyed()) { clearInterval(timer); return }
+    const t = Math.min(1, (Date.now() - t0) / durationMs)
+    const e = smoothstep(t)
+    try {
+      win.setOpacity(targetOpacity * e)
+      win.setBounds({
+        x: Math.round(startBounds.x + (finalBounds.x - startBounds.x) * e),
+        y: Math.round(startBounds.y + (finalBounds.y - startBounds.y) * e),
+        width: Math.round(startBounds.width + (finalBounds.width - startBounds.width) * e),
+        height: Math.round(startBounds.height + (finalBounds.height - startBounds.height) * e)
+      })
+    } catch (_) {}
+    if (t >= 1) {
+      clearInterval(timer)
+      try { win.setBounds(finalBounds) } catch (_) {}
+      if (onDone) onDone()
+    }
+  }, 16)
+}
+
 // ---------------------------------------------------------------------------
 // Menu window
 // ---------------------------------------------------------------------------
@@ -618,7 +748,7 @@ function createSettingsWindow() {
     }
   })
   loadRenderer(settingsWindow, 'settings')
-  settingsWindow.setOpacity(1.0)
+  playWindowOpenAnimation(settingsWindow)
   setupAlwaysOnTopBehavior(settingsWindow)
   settingsWindow.on('closed', () => {
     settingsWindow = null
@@ -644,7 +774,7 @@ function createAppStoreWindow() {
     }
   })
   loadRenderer(appStoreWindow, 'appstore')
-  appStoreWindow.setOpacity(1.0)
+  playWindowOpenAnimation(appStoreWindow)
   setupAlwaysOnTopBehavior(appStoreWindow)
   appStoreWindow.on('closed', () => {
     appStoreWindow = null
@@ -712,6 +842,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
           devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
         }
       })
+      try { _contentView.setBackgroundColor('#191b1e') } catch (_) {}
       win.contentView.addChildView(_contentView)
       const updateViewBounds = () => {
         if (!_contentView || win.isDestroyed()) return
@@ -722,6 +853,13 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
       }
       updateViewBounds()
       _contentView.webContents.loadURL(resolvedUrl)
+      _contentView.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3 /* ERR_ABORTED — usually a redirect, not a real failure */) return
+        console.error('[SilverVision] Overlay content failed to load:', { url: validatedURL, errorCode, errorDescription })
+      })
+      _contentView.webContents.on('render-process-gone', (_e, details) => {
+        console.error('[SilverVision] Overlay content renderer process gone:', details)
+      })
       _contentView.webContents.setWindowOpenHandler(({ url: newUrl }) => {
         if (newUrl && newUrl.startsWith('chrome-extension://')) {
           try { openExtensionWindow(newUrl) } catch (_) {}
@@ -750,8 +888,9 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
         if (isMainFrame !== false) clearTrackedEveVaultRequestsForWebContents(_contentView.webContents.id)
       })
       overlayContentViews.set(win.id, { view: _contentView, updateBounds: updateViewBounds })
+      eveVaultViews.set(_contentView.webContents.id, { view: _contentView, windowId: win.id })
     } catch (err) {
-      console.error('[EFC] Failed to create WebContentsView for overlay:', err)
+      console.error('[SilverVision] Failed to create WebContentsView for overlay:', err)
       _contentView = null
     }
   }
@@ -766,6 +905,10 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
         devTools: false
       }
     })
+    // Fully transparent — the margin area around the floating card (added so
+    // its drop shadow has room to render, see SETTINGS_PANEL_SHADOW_MARGIN)
+    // must show whatever's behind it, not an opaque fill.
+    try { settingsView.setBackgroundColor('#00000000') } catch (_) {}
     win.contentView.addChildView(settingsView)
     settingsView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     loadViewRenderer(settingsView, 'settingsPanel', {
@@ -783,7 +926,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
       })
     }
   } catch (err) {
-    console.error('[EFC] Failed to create settings overlay view:', err)
+    console.error('[SilverVision] Failed to create settings overlay view:', err)
   }
 
   // Overlay renderer — pass empty url if WebContentsView is handling the content
@@ -806,6 +949,11 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
   const ctrl = makeOverlayController(win, initialPinned, initialOpacityMin, initialOpacityMax)
   windowAnimators.set(win.id, ctrl)
   setupAlwaysOnTopBehavior(win)
+  // makeOverlayController's constructor already snapped opacity straight to
+  // OPACITY_ACTIVE — play the open animation on top of that starting point
+  // rather than reordering construction (ctrl needs to exist immediately;
+  // other IPC handlers key off windowAnimators.get(win.id) from frame one).
+  playWindowOpenAnimation(win, initialOpacityMax)
 
   let lastBounds = win.getBounds()
   win.on('resize', () => {
@@ -815,7 +963,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
     if (sEntry && sEntry.visible) {
       try {
         const b = win.getBounds()
-        sEntry.view.setBounds({ x: b.width - SETTINGS_PANEL_W - 1, y: TITLEBAR_HEIGHT, width: SETTINGS_PANEL_W, height: SETTINGS_PANEL_H })
+        sEntry.view.setBounds(settingsPanelBounds(b.width, TITLEBAR_HEIGHT))
       } catch (_) {}
     }
   })
@@ -842,6 +990,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
       const cvEntry = overlayContentViews.get(win.id)
       if (cvEntry?.view) {
         clearTrackedEveVaultRequestsForWebContents(cvEntry.view.webContents.id)
+        eveVaultViews.delete(cvEntry.view.webContents.id)
         try { cvEntry.view.webContents.close() } catch (_) {}
         try { win.contentView.removeChildView(cvEntry.view) } catch (_) {}
       }
@@ -852,6 +1001,364 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
     openOverlays.delete(key)
     if (menuWindow && !menuWindow.isDestroyed()) menuWindow.webContents.send('overlay:closed', key)
   })
+
+  return win
+}
+
+// ---------------------------------------------------------------------------
+// Browser window — a built-in, singleton overlay window with tabs. Uses the
+// same shared chrome helpers as createOverlayWindow (makeOverlayController,
+// setupAlwaysOnTopBehavior, bounds persistence) so transparency/fade/collapse
+// behavior stays identical to regular launched apps, but manages its own
+// array of content WebContentsViews (one per tab) plus a toolbar
+// WebContentsView instead of createOverlayWindow's single _contentView.
+// ---------------------------------------------------------------------------
+let _browserTabIdCounter = 0
+
+function getActiveBrowserTab(win) {
+  const state = browserTabState.get(win.id)
+  if (!state) return null
+  return state.tabs.find(t => t.id === state.activeTabId) || null
+}
+
+function updateBrowserBounds(win) {
+  if (win.isDestroyed()) return
+  const b = win.getBounds()
+  const toolbarView = browserToolbarViews.get(win.id)
+  if (toolbarView) {
+    try {
+      toolbarView.setBounds({
+        x: 0, y: TITLEBAR_HEIGHT,
+        width: b.width,
+        height: Math.max(0, BROWSER_TAB_STRIP_HEIGHT + BROWSER_TOOLBAR_HEIGHT)
+      })
+    } catch (_) {}
+  }
+  const active = getActiveBrowserTab(win)
+  if (active) {
+    try {
+      active.view.setBounds({
+        x: 1, y: BROWSER_CHROME_HEIGHT,
+        width: Math.max(0, b.width - 2),
+        height: Math.max(0, b.height - BROWSER_CHROME_HEIGHT - 1)
+      })
+    } catch (_) {}
+  }
+  const sEntry = settingsOverlayViews.get(win.id)
+  if (sEntry && sEntry.visible) {
+    try {
+      // Floats directly under the titlebar (like the regular overlay
+      // window), not below the whole tab-strip/toolbar stack — it's a
+      // window-level settings menu, not part of the browser chrome.
+      sEntry.view.setBounds(settingsPanelBounds(b.width, TITLEBAR_HEIGHT))
+    } catch (_) {}
+  }
+}
+
+function hideBrowserChromeForCollapse(win) {
+  const toolbarView = browserToolbarViews.get(win.id)
+  if (toolbarView) { try { toolbarView.setBounds({ x: 0, y: TITLEBAR_HEIGHT, width: 0, height: 0 }) } catch (_) {} }
+  const active = getActiveBrowserTab(win)
+  if (active) { try { active.view.setBounds({ x: 0, y: BROWSER_CHROME_HEIGHT, width: win.getBounds().width, height: 0 }) } catch (_) {} }
+}
+
+function sendBrowserTabsChanged(win) {
+  const toolbarView = browserToolbarViews.get(win.id)
+  const state = browserTabState.get(win.id)
+  if (!toolbarView || !state || toolbarView.webContents.isDestroyed()) return
+  const payload = {
+    activeTabId: state.activeTabId,
+    tabs: state.tabs.map(t => ({
+      id: t.id, url: t.url, title: t.title, favicon: t.favicon,
+      isLoading: t.isLoading,
+      canGoBack: t.view.webContents.navigationHistory ? t.view.webContents.navigationHistory.canGoBack() : t.view.webContents.canGoBack(),
+      canGoForward: t.view.webContents.navigationHistory ? t.view.webContents.navigationHistory.canGoForward() : t.view.webContents.canGoForward()
+    }))
+  }
+  try { toolbarView.webContents.send('browser:tabsChanged', payload) } catch (_) {}
+}
+
+function persistBrowserSession(win) {
+  const state = browserTabState.get(win.id)
+  if (!state) return
+  const activeIndex = Math.max(0, state.tabs.findIndex(t => t.id === state.activeTabId))
+  const entry = getBoundsStore()[BROWSER_KEY] || {}
+  saveBounds(BROWSER_KEY, {
+    ...entry,
+    tabs: state.tabs.map(t => ({ url: t.url, title: t.title })),
+    activeIndex
+  })
+}
+
+function createBrowserTab(win, url) {
+  const state = browserTabState.get(win.id)
+  if (!state) return null
+
+  const view = new WebContentsView({
+    webPreferences: {
+      session: session.fromPartition('persist:overlay'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: OVERLAY_PRELOAD_PATH,
+      devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
+    }
+  })
+  try { view.setBackgroundColor('#191b1e') } catch (_) {}
+  // Always insert at the bottom of the z-stack (index 0) so a tab opened
+  // after window creation can never end up layered above the toolbar or
+  // settings panel, which are added once at window-creation time.
+  win.contentView.addChildView(view, 0)
+  view.setBounds({ x: 0, y: BROWSER_CHROME_HEIGHT, width: 0, height: 0 })
+
+  const tab = { id: `bt-${++_browserTabIdCounter}`, view, url: url || BROWSER_NEW_TAB_URL, title: '', favicon: '', isLoading: true }
+  state.tabs.push(tab)
+
+  const wc = view.webContents
+  eveVaultViews.set(wc.id, { view, windowId: win.id })
+  wc.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame !== false) clearTrackedEveVaultRequestsForWebContents(wc.id)
+  })
+  if (tab.url === BROWSER_NEW_TAB_URL) loadViewRenderer(view, 'browserNewTab')
+  else wc.loadURL(tab.url)
+  wc.setWindowOpenHandler(({ url: newUrl }) => {
+    if (newUrl && newUrl.startsWith('chrome-extension://')) {
+      try { openExtensionWindow(newUrl) } catch (_) {}
+      return { action: 'deny' }
+    }
+    createBrowserTab(win, newUrl)
+    activateBrowserTab(win, state.tabs[state.tabs.length - 1].id)
+    return { action: 'deny' }
+  })
+  wc.on('did-start-loading', () => { tab.isLoading = true; sendBrowserTabsChanged(win) })
+  wc.on('did-stop-loading', () => { tab.isLoading = false; sendBrowserTabsChanged(win) })
+  // The internal browserNewTab renderer's own file:// / dev-server URL must
+  // never leak into tab.url/the omnibox/persisted session — it's an
+  // implementation detail of the blank state (BROWSER_NEW_TAB_URL). Checked
+  // against the URL actually being navigated TO, not tab.url's current
+  // value — tab.url is still BROWSER_NEW_TAB_URL at the moment the user's
+  // first real navigation away from a blank tab fires this same event, so
+  // comparing against tab.url would (and did) swallow that first navigation
+  // and leave the omnibox showing nothing.
+  const isInternalNewTabUrl = (navUrl) => navUrl.includes('/browserNewTab/')
+  wc.on('did-navigate', (_e, navUrl) => {
+    if (isInternalNewTabUrl(navUrl)) return
+    tab.url = navUrl; sendBrowserTabsChanged(win); persistBrowserSession(win)
+  })
+  wc.on('did-navigate-in-page', (_e, navUrl) => {
+    if (isInternalNewTabUrl(navUrl)) return
+    tab.url = navUrl; sendBrowserTabsChanged(win); persistBrowserSession(win)
+  })
+  wc.on('page-title-updated', (_e, title) => { tab.title = title; sendBrowserTabsChanged(win); persistBrowserSession(win) })
+  wc.on('page-favicon-updated', (_e, favicons) => { tab.favicon = (favicons && favicons[0]) || ''; sendBrowserTabsChanged(win) })
+  wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 /* ERR_ABORTED — usually a redirect, not a real failure */) return
+    console.error('[SilverVision] Browser tab failed to load:', { url: validatedURL, errorCode, errorDescription })
+  })
+  wc.on('render-process-gone', (_e, details) => {
+    console.error('[SilverVision] Browser tab renderer process gone:', details)
+  })
+  wc.on('focus', () => {
+    const sEntry = settingsOverlayViews.get(win.id)
+    if (!sEntry || !sEntry.visible) return
+    sEntry.visible = false
+    try { sEntry.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }) } catch (_) {}
+    try { win.webContents.send('chrome:settingsMenuClosed') } catch (_) {}
+  })
+
+  return tab
+}
+
+function activateBrowserTab(win, tabId) {
+  const state = browserTabState.get(win.id)
+  if (!state) return
+  const next = state.tabs.find(t => t.id === tabId)
+  if (!next) return
+  const prev = getActiveBrowserTab(win)
+  if (prev && prev.id !== tabId) {
+    try { prev.view.setBounds({ x: 0, y: BROWSER_CHROME_HEIGHT, width: 0, height: 0 }) } catch (_) {}
+  }
+  state.activeTabId = tabId
+  updateBrowserBounds(win)
+  sendBrowserTabsChanged(win)
+}
+
+function closeBrowserTab(win, tabId) {
+  const state = browserTabState.get(win.id)
+  if (!state) return
+  if (state.tabs.length <= 1) return // last tab can't be closed
+  const idx = state.tabs.findIndex(t => t.id === tabId)
+  if (idx === -1) return
+  const [closed] = state.tabs.splice(idx, 1)
+  clearTrackedEveVaultRequestsForWebContents(closed.view.webContents.id)
+  eveVaultViews.delete(closed.view.webContents.id)
+  try { win.contentView.removeChildView(closed.view) } catch (_) {}
+  try { closed.view.webContents.close() } catch (_) {}
+  if (state.activeTabId === tabId) {
+    const neighbor = state.tabs[idx] || state.tabs[idx - 1] || state.tabs[0]
+    state.activeTabId = neighbor.id
+    updateBrowserBounds(win)
+  }
+  sendBrowserTabsChanged(win)
+  persistBrowserSession(win)
+}
+
+function createBrowserWindow() {
+  if (browserWindow && !browserWindow.isDestroyed()) {
+    if (browserWindow.isMinimized()) browserWindow.restore()
+    browserWindow.focus()
+    return browserWindow
+  }
+
+  const saved = loadBounds(BROWSER_KEY)
+  const initW = saved ? saved.width  : 1000
+  const initH = saved ? saved.height : 700
+
+  const winOpts = {
+    width: initW, height: initH,
+    minWidth: 400, minHeight: 300,
+    frame: false, transparent: true,
+    alwaysOnTop: true, resizable: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: PRELOAD_PATH,
+      devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
+    }
+  }
+  if (saved && saved.x !== undefined) { winOpts.x = saved.x; winOpts.y = saved.y }
+
+  const win = new BrowserWindow(winOpts)
+  browserWindow = win
+  overlayKeys.set(win.id, BROWSER_KEY) // needed by window:togglePin et al, which key off this map
+
+  const initialPinned     = saved ? !!saved.pinned                                             : false
+  const initialOpacityMin = saved ? (saved.opacityMin ?? getConfigValue('defaultOpacityMin'))  : getConfigValue('defaultOpacityMin')
+  const initialOpacityMax = saved ? (saved.opacityMax ?? getConfigValue('defaultOpacityMax'))  : getConfigValue('defaultOpacityMax')
+
+  // Toolbar (tab strip + omnibox), layered above content — same technique as
+  // the settings panel in createOverlayWindow.
+  const toolbarView = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: PRELOAD_PATH,
+      devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
+    }
+  })
+  win.contentView.addChildView(toolbarView)
+  browserToolbarViews.set(win.id, toolbarView)
+  loadViewRenderer(toolbarView, 'browserToolbar')
+
+  browserTabState.set(win.id, { tabs: [], activeTabId: null })
+
+  const restoredTabs = Array.isArray(saved?.tabs) && saved.tabs.length ? saved.tabs : [{ url: BROWSER_HOME_URL }]
+  let firstTab = null
+  for (const t of restoredTabs) {
+    const tab = createBrowserTab(win, t.url)
+    if (!firstTab) firstTab = tab
+  }
+  const restoreIndex = Number.isInteger(saved?.activeIndex) ? saved.activeIndex : 0
+  const state = browserTabState.get(win.id)
+
+  // Opacity settings panel (WebContentsView) — added LAST so it stacks above
+  // the toolbar and every tab's content view (WebContentsView z-order is
+  // purely addChildView call sequence — later calls render on top). Same
+  // construction as createOverlayWindow's settingsView, so window:
+  // setOpacityRange/settingsMenuVisible work identically for the browser.
+  try {
+    const settingsView = new WebContentsView({
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: PRELOAD_PATH,
+        devTools: false
+      }
+    })
+    // Fully transparent — the margin area around the floating card (added so
+    // its drop shadow has room to render, see SETTINGS_PANEL_SHADOW_MARGIN)
+    // must show whatever's behind it, not an opaque fill.
+    try { settingsView.setBackgroundColor('#00000000') } catch (_) {}
+    win.contentView.addChildView(settingsView)
+    settingsView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    loadViewRenderer(settingsView, 'settingsPanel', {
+      opacityMin: String(initialOpacityMin),
+      opacityMax: String(initialOpacityMax)
+    })
+    settingsOverlayViews.set(win.id, { view: settingsView, visible: false })
+  } catch (err) {
+    console.error('[SilverVision] Failed to create settings overlay view for browser window:', err)
+  }
+  const initialActive = state.tabs[restoreIndex] || state.tabs[0]
+  state.activeTabId = initialActive.id
+
+  toolbarView.webContents.once('did-finish-load', () => sendBrowserTabsChanged(win))
+
+  loadRenderer(win, 'window', {
+    title: 'Browser',
+    url: '',
+    pinned: initialPinned ? '1' : '0',
+    opacityMin: String(initialOpacityMin),
+    opacityMax: String(initialOpacityMax)
+  })
+
+  if (AUTO_OPEN_OVERLAY_DEVTOOLS) {
+    try { win.webContents.openDevTools({ mode: 'detach' }) } catch (_) {}
+  }
+
+  const ctrl = makeOverlayController(win, initialPinned, initialOpacityMin, initialOpacityMax)
+  windowAnimators.set(win.id, ctrl)
+  setupAlwaysOnTopBehavior(win)
+  playWindowOpenAnimation(win, initialOpacityMax)
+
+  updateBrowserBounds(win)
+
+  let lastBounds = win.getBounds()
+  win.on('resize', () => {
+    try { lastBounds = win.getBounds() } catch (_) {}
+    updateBrowserBounds(win)
+  })
+  win.on('move', () => { try { lastBounds = win.getBounds() } catch (_) {} })
+
+  win.on('closed', () => {
+    try {
+      const entry = getBoundsStore()[BROWSER_KEY] || {}
+      saveBounds(BROWSER_KEY, { ...entry, ...lastBounds })
+    } catch (_) {}
+    persistBrowserSession(win)
+    ctrl.cleanup()
+    const state = browserTabState.get(win.id)
+    if (state) {
+      for (const tab of state.tabs) {
+        clearTrackedEveVaultRequestsForWebContents(tab.view.webContents.id)
+        eveVaultViews.delete(tab.view.webContents.id)
+        try { win.contentView.removeChildView(tab.view) } catch (_) {}
+        try { tab.view.webContents.close() } catch (_) {}
+      }
+    }
+    browserTabState.delete(win.id)
+    try {
+      const toolbarView = browserToolbarViews.get(win.id)
+      if (toolbarView) {
+        try { win.contentView.removeChildView(toolbarView) } catch (_) {}
+        try { toolbarView.webContents.close() } catch (_) {}
+      }
+    } catch (_) {}
+    browserToolbarViews.delete(win.id)
+    try {
+      const sEntry = settingsOverlayViews.get(win.id)
+      if (sEntry?.view) {
+        try { sEntry.view.webContents.close() } catch (_) {}
+        try { win.contentView.removeChildView(sEntry.view) } catch (_) {}
+      }
+    } catch (_) {}
+    settingsOverlayViews.delete(win.id)
+    windowAnimators.delete(win.id)
+    overlayKeys.delete(win.id)
+    if (browserWindow === win) browserWindow = null
+    if (menuWindow && !menuWindow.isDestroyed()) menuWindow.webContents.send('browser:closed')
+  })
+
+  if (menuWindow && !menuWindow.isDestroyed()) menuWindow.webContents.send('browser:opened')
 
   return win
 }
@@ -878,17 +1385,17 @@ app.whenReady().then(async () => {
   const overlaySession = session.fromPartition('persist:overlay')
 
   function _relayOAuthUrl(url) {
-    console.log('[EFC] OAuth redirect captured:', url)
+    console.log('[SilverVision] OAuth redirect captured:', url)
     const relay = (_keeperWindow && !_keeperWindow.isDestroyed()) ? _keeperWindow
                 : (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed()) ? _vaultPopupWindow
                 : null
     if (relay) {
       relay.webContents.executeJavaScript(
         `chrome.runtime.sendMessage({type:'OAUTH_REDIRECT',url:${JSON.stringify(url)}})`
-      ).then(() => console.log('[EFC] OAUTH_REDIRECT relayed OK'))
-       .catch(e => console.error('[EFC] OAUTH_REDIRECT relay failed:', e))
+      ).then(() => console.log('[SilverVision] OAUTH_REDIRECT relayed OK'))
+       .catch(e => console.error('[SilverVision] OAUTH_REDIRECT relay failed:', e))
     } else {
-      console.warn('[EFC] No relay window available for OAUTH_REDIRECT')
+      console.warn('[SilverVision] No relay window available for OAUTH_REDIRECT')
     }
     if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed()) {
       try { _vaultPopupWindow.webContents.send('extension:oauthRedirect', url) } catch (_) {}
@@ -923,10 +1430,10 @@ app.whenReady().then(async () => {
     try {
       const ext = await overlaySession.extensions.loadExtension(EXTENSION_PATH, { allowFileAccess: true })
       _eveVaultExtId = ext.id
-      console.log('[EFC] EVE Vault auto-loaded:', _eveVaultExtId)
+      console.log('[SilverVision] EVE Vault auto-loaded:', _eveVaultExtId)
       createKeeperWindow(_eveVaultExtId)
     } catch (err) {
-      console.error('[EFC] Failed to auto-load EVE Vault extension:', err)
+      console.error('[SilverVision] Failed to auto-load EVE Vault extension:', err)
     }
   }
 
@@ -1012,6 +1519,7 @@ ipcMain.on('window:setCollapsed', (event, { collapsed, restoreHeight }) => {
       win.setBounds({ ...b, height: 32 })
       const cvEntry = overlayContentViews.get(win.id)
       if (cvEntry) try { cvEntry.view.setBounds({ x: 0, y: TITLEBAR_HEIGHT, width: b.width, height: 0 }) } catch (_) {}
+      if (browserTabState.has(win.id)) hideBrowserChromeForCollapse(win)
     } else {
       const h = restoreHeight || collapseRestoreHeights.get(win.id) || 400
       collapseRestoreHeights.delete(win.id)
@@ -1019,6 +1527,7 @@ ipcMain.on('window:setCollapsed', (event, { collapsed, restoreHeight }) => {
       win.setBounds({ ...b, height: h })
       const cvEntry = overlayContentViews.get(win.id)
       if (cvEntry) setTimeout(() => { try { cvEntry.updateBounds() } catch (_) {} }, 50)
+      if (browserTabState.has(win.id)) setTimeout(() => { try { updateBrowserBounds(win) } catch (_) {} }, 50)
     }
   } catch (_) {}
   windowAnimators.get(win.id)?.setCollapsed(collapsed)
@@ -1047,7 +1556,14 @@ ipcMain.on('window:settingsMenuVisible', (event, visible) => {
   try {
     if (visible) {
       const b = win.getBounds()
-      sEntry.view.setBounds({ x: b.width - SETTINGS_PANEL_W - 1, y: TITLEBAR_HEIGHT, width: SETTINGS_PANEL_W, height: SETTINGS_PANEL_H })
+      // Always floats directly under the titlebar, even in the browser
+      // window, where the tab-strip/toolbar sit below it — it's a
+      // window-level menu, not part of that chrome.
+      sEntry.view.setBounds(settingsPanelBounds(b.width, TITLEBAR_HEIGHT))
+      // The panel's WebContentsView is created once and just resized to/from
+      // zero bounds on toggle — its page never reloads, so it needs an
+      // explicit nudge each time to replay its show transition.
+      try { sEntry.view.webContents.send('settingsPanel:shown') } catch (_) {}
     } else {
       sEntry.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     }
@@ -1061,6 +1577,76 @@ ipcMain.on('menu:openOverlay', (event, payload) => {
 
 ipcMain.on('menu:openSettings', () => createSettingsWindow())
 ipcMain.on('menu:openAppStore', () => createAppStoreWindow())
+ipcMain.on('menu:openBrowser',  () => createBrowserWindow())
+
+// ---------------------------------------------------------------------------
+// Browser toolbar commands — sent from the browserToolbar WebContentsView
+// ---------------------------------------------------------------------------
+ipcMain.on('browser:newTab', (event, url) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || !browserTabState.has(win.id)) return
+  // "+" opens blank (BROWSER_NEW_TAB_URL, via createBrowserTab's own default)
+  // rather than auto-navigating to BROWSER_HOME_URL — only the very first
+  // tab of a fresh session (no saved state at all) defaults to the home URL.
+  const tab = createBrowserTab(win, url ? resolveBrowserInput(url) : undefined)
+  if (tab) activateBrowserTab(win, tab.id)
+  persistBrowserSession(win)
+})
+
+ipcMain.on('browser:closeTab', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return
+  closeBrowserTab(win, tabId)
+})
+
+ipcMain.on('browser:activateTab', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return
+  activateBrowserTab(win, tabId)
+  persistBrowserSession(win)
+})
+
+ipcMain.on('browser:navigate', (event, { tabId, input }) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const state = win && browserTabState.get(win.id)
+  const tab = state && state.tabs.find(t => t.id === tabId)
+  if (!tab) return
+  try { tab.view.webContents.loadURL(resolveBrowserInput(input)) } catch (_) {}
+})
+
+ipcMain.on('browser:goBack', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const state = win && browserTabState.get(win.id)
+  const tab = state && state.tabs.find(t => t.id === tabId)
+  if (!tab) return
+  const nav = tab.view.webContents.navigationHistory
+  try { nav ? nav.goBack() : tab.view.webContents.goBack() } catch (_) {}
+})
+
+ipcMain.on('browser:goForward', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const state = win && browserTabState.get(win.id)
+  const tab = state && state.tabs.find(t => t.id === tabId)
+  if (!tab) return
+  const nav = tab.view.webContents.navigationHistory
+  try { nav ? nav.goForward() : tab.view.webContents.goForward() } catch (_) {}
+})
+
+ipcMain.on('browser:reload', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const state = win && browserTabState.get(win.id)
+  const tab = state && state.tabs.find(t => t.id === tabId)
+  if (!tab) return
+  try { tab.view.webContents.reload() } catch (_) {}
+})
+
+ipcMain.on('browser:stop', (event, tabId) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const state = win && browserTabState.get(win.id)
+  const tab = state && state.tabs.find(t => t.id === tabId)
+  if (!tab) return
+  try { tab.view.webContents.stop() } catch (_) {}
+})
 
 ipcMain.on('settings:close', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.destroy()
@@ -1145,6 +1731,46 @@ ipcMain.handle('menu:removeCustomItem', async (_, { url }) => {
 })
 
 // ---------------------------------------------------------------------------
+// IPC — App Store's user-authored catalog entries ("Custom" tab)
+// ---------------------------------------------------------------------------
+ipcMain.handle('appstore:getCustomApps', async () => getCatalogCustomApps())
+
+ipcMain.handle('appstore:upsertCustomApp', async (_, app) => {
+  if (!app || typeof app.name !== 'string' || typeof app.url !== 'string') return { ok: false, error: 'Invalid app' }
+  if (app.url.includes('://')) {
+    try {
+      const p = new URL(app.url)
+      if (!['http:', 'https:', 'file:'].includes(p.protocol)) return { ok: false, error: 'Invalid URL scheme' }
+    } catch { return { ok: false, error: 'Invalid URL' } }
+  }
+  const sanitized = {
+    id:          typeof app.id === 'string' && app.id ? app.id.slice(0, 100) : (Date.now().toString(36) + Math.random().toString(36).slice(2)),
+    name:        String(app.name).slice(0, 100),
+    url:         String(app.url),
+    icon:        String(app.icon || '').slice(0, 2048),
+    description: String(app.description || '').slice(0, 500),
+    width:       Math.max(200, Math.min(3840, Number(app.width)  || 800)),
+    height:      Math.max(200, Math.min(2160, Number(app.height) || 600)),
+    category:    String(app.category || '').slice(0, 50)
+  }
+  const apps = getCatalogCustomApps()
+  const idx = apps.findIndex(a => a.id === sanitized.id)
+  if (idx !== -1) apps[idx] = sanitized
+  else apps.push(sanitized)
+  saveCatalogCustomApps(apps)
+  notifyCatalogCustomApps()
+  return { ok: true, app: sanitized }
+})
+
+ipcMain.handle('appstore:removeCustomApp', async (_, { id }) => {
+  if (typeof id !== 'string') return { ok: false }
+  const apps = getCatalogCustomApps().filter(a => a.id !== id)
+  saveCatalogCustomApps(apps)
+  notifyCatalogCustomApps()
+  return { ok: true }
+})
+
+// ---------------------------------------------------------------------------
 // IPC — Catalog (read/write catalog.json)
 // ---------------------------------------------------------------------------
 ipcMain.handle('catalog:read', async () => {
@@ -1172,11 +1798,30 @@ ipcMain.handle('catalog:write', async (_, content) => {
 // IPC — Settings
 // ---------------------------------------------------------------------------
 ipcMain.handle('settings:getAll', () => ({ ...CONFIG_DEFAULTS, ...getConfig() }))
+ipcMain.handle('settings:getVersion', () => app.getVersion())
+
+ipcMain.on('settings:openExternal', (_, url) => {
+  if (typeof url !== 'string') return
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return
+    shell.openExternal(url)
+  } catch (_) {}
+})
 
 ipcMain.on('settings:set', (_, key, value) => {
   if (!(key in CONFIG_DEFAULTS)) return
   getConfig()[key] = value
   saveConfig()
+  if (key === 'theme') {
+    // Every renderer — top-level windows AND every layered WebContentsView
+    // (browser tabs, toolbar, settings panel) — is a separate webContents,
+    // so a config write alone doesn't reach any of them; push it live to
+    // all of them at once rather than waiting for the next window open.
+    for (const wc of webContents.getAllWebContents()) {
+      try { wc.send('settings:themeChanged', value) } catch (_) {}
+    }
+  }
 })
 
 ipcMain.on('settings:clearBounds', () => {
@@ -1192,6 +1837,8 @@ ipcMain.on('settings:clearSession', () => {
 ipcMain.on('settings:clearCustomItems', () => {
   saveCustomItems([])
   notifyMenuItems()
+  saveCatalogCustomApps([])
+  notifyCatalogCustomApps()
 })
 
 ipcMain.on('settings:clearAll', () => {
@@ -1199,6 +1846,8 @@ ipcMain.on('settings:clearAll', () => {
   _configCache = {}; saveConfig()
   saveCustomItems([])
   notifyMenuItems()
+  saveCatalogCustomApps([])
+  notifyCatalogCustomApps()
   const s = session.fromPartition('persist:overlay')
   s.clearCache().catch(() => {})
   s.clearStorageData().catch(() => {})
@@ -1234,7 +1883,7 @@ ipcMain.on('extension:toggle', async () => {
     try {
       const ext = await s.extensions.loadExtension(EXTENSION_PATH, { allowFileAccess: true })
       _eveVaultExtId = ext.id
-      console.log('[EFC] EVE Vault toggled on:', _eveVaultExtId)
+      console.log('[SilverVision] EVE Vault toggled on:', _eveVaultExtId)
       createKeeperWindow(_eveVaultExtId)
       setTimeout(() => {
         if (!_eveVaultExtId) return
@@ -1245,7 +1894,7 @@ ipcMain.on('extension:toggle', async () => {
       getConfig().eveVaultEnabled = true; saveConfig()
       if (menuWindow && !menuWindow.isDestroyed()) menuWindow.webContents.send('extension:stateChanged', true)
     } catch (err) {
-      console.error('[EFC] Failed to load EVE Vault extension:', err)
+      console.error('[SilverVision] Failed to load EVE Vault extension:', err)
     }
   }
 })
@@ -1304,28 +1953,28 @@ function openExtensionWindow(url, opts = {}) {
     childWin.on('closed', () => { if (_oauthPopupWindow === childWin) _oauthPopupWindow = null })
   })
   win.webContents.on('did-start-loading', () => {
-    console.log('[EFC] vault window did-start-loading:', url)
+    console.log('[SilverVision] vault window did-start-loading:', url)
   })
   win.webContents.on('dom-ready', () => {
-    console.log('[EFC] vault window dom-ready:', win.webContents.getURL())
+    console.log('[SilverVision] vault window dom-ready:', win.webContents.getURL())
   })
   win.webContents.on('did-finish-load', () => {
-    console.log('[EFC] vault window did-finish-load:', win.webContents.getURL())
+    console.log('[SilverVision] vault window did-finish-load:', win.webContents.getURL())
     if (AUTO_OPEN_OVERLAY_DEVTOOLS) {
       try { win.webContents.openDevTools({ mode: 'detach' }) } catch (_) {}
     }
   })
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-    console.log('[EFC] vault window console:', { level, message, line, sourceId, url: win.webContents.getURL() })
+    console.log('[SilverVision] vault window console:', { level, message, line, sourceId, url: win.webContents.getURL() })
   })
   win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
-    console.error('[EFC] vault window failed to load:', { errorCode, errorDescription, validatedURL })
+    console.error('[SilverVision] vault window failed to load:', { errorCode, errorDescription, validatedURL })
   })
   win.webContents.on('render-process-gone', (_e, details) => {
-    console.error('[EFC] vault window renderer crashed/gone:', details)
+    console.error('[SilverVision] vault window renderer crashed/gone:', details)
   })
   win.webContents.on('unresponsive', () => {
-    console.error('[EFC] vault window became unresponsive:', win.webContents.getURL())
+    console.error('[SilverVision] vault window became unresponsive:', win.webContents.getURL())
   })
   win.loadURL(url)
   win.once('ready-to-show', () => { win.show(); win.moveTop(); win.focus() })
@@ -1350,7 +1999,7 @@ ipcMain.on('extension:trackDappRequest', (event, request) => {
     existing.expiresAt > Date.now() &&
     existing.webContentsId !== event.sender.id
   ) {
-    console.warn('[EFC] Ignoring duplicate EveVault request id from another overlay:', request.id)
+    console.warn('[SilverVision] Ignoring duplicate EveVault request id from another overlay:', request.id)
     return
   }
 
@@ -1374,7 +2023,7 @@ ipcMain.handle('extension:relayTabMessage', async (event, request) => {
   let targets = []
 
   if (message.event === 'change') {
-    targets = Array.from(overlayContentViews, ([windowId, entry]) => ({ windowId, entry }))
+    targets = Array.from(eveVaultViews, ([, entry]) => ({ windowId: entry.windowId, entry }))
   } else if (requestId) {
     const tracked = getTrackedEveVaultTarget(requestId)
     if (tracked) targets = [tracked]
@@ -1387,8 +2036,8 @@ ipcMain.handle('extension:relayTabMessage', async (event, request) => {
 
   // Covers a request emitted before the tracking preload initialized while
   // avoiding the cross-dApp response leak of the old broadcast behavior.
-  if (targets.length === 0 && overlayContentViews.size === 1) {
-    targets = Array.from(overlayContentViews, ([windowId, entry]) => ({ windowId, entry }))
+  if (targets.length === 0 && eveVaultViews.size === 1) {
+    targets = Array.from(eveVaultViews, ([, entry]) => ({ windowId: entry.windowId, entry }))
   }
 
   if (targets.length === 0) {
@@ -1417,7 +2066,7 @@ ipcMain.handle('extension:relayTabMessage', async (event, request) => {
   const confirmedCount = results.filter(Boolean).length
 
   if (requestId && confirmedCount > 0) pendingEveVaultRequests.delete(requestId)
-  console.log('[EFC] EveVault page response relay:', {
+  console.log('[SilverVision] EveVault page response relay:', {
     id: requestId,
     type: message.type || message.event,
     targetCount: targets.length,
@@ -1434,10 +2083,10 @@ ipcMain.handle('extension:relayTabMessage', async (event, request) => {
 })
 
 ipcMain.on('extension:requestOpenWindow', (event, url) => {
-  console.log('[EFC] extension:requestOpenWindow received:', url, '| extId:', _eveVaultExtId)
+  console.log('[SilverVision] extension:requestOpenWindow received:', url, '| extId:', _eveVaultExtId)
   if (!url || typeof url !== 'string') return
   if (!_eveVaultExtId || !url.startsWith(`chrome-extension://${_eveVaultExtId}/`)) {
-    console.warn('[EFC] extension:requestOpenWindow rejected — url does not match extension id')
+    console.warn('[SilverVision] extension:requestOpenWindow rejected — url does not match extension id')
     return
   }
   const existing = BrowserWindow.getAllWindows().find(w => {
@@ -1484,5 +2133,5 @@ app.on('browser-window-created', (_event, win) => {
 })
 
 ipcMain.on('overlay:webview-status', (_event, { url, extId }) => {
-  console.log('[EFC] overlay webview status:', url || '<no-url>', 'extId:', extId)
+  console.log('[SilverVision] overlay webview status:', url || '<no-url>', 'extId:', extId)
 })

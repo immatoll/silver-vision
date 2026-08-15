@@ -47,7 +47,9 @@ export default defineConfig({
           appstore:      resolve(__dirname, 'src/renderer/appstore/index.html'),
           settings:      resolve(__dirname, 'src/renderer/settings/index.html'),
           window:        resolve(__dirname, 'src/renderer/window/index.html'),
-          settingsPanel: resolve(__dirname, 'src/renderer/settingsPanel/index.html')
+          settingsPanel: resolve(__dirname, 'src/renderer/settingsPanel/index.html'),
+          browserToolbar: resolve(__dirname, 'src/renderer/browserToolbar/index.html'),
+          browserNewTab: resolve(__dirname, 'src/renderer/browserNewTab/index.html')
         }
       }
     }

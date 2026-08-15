@@ -58,6 +58,57 @@
   --color-efc-red-deep: #331a1a;
   --color-efc-gold: #dfb877;
   --color-efc-success: #7fc088;
+  /* Filled-button backgrounds meant to carry white text (e.g. primary/severe
+     action buttons) — deliberately NOT theme-relative like the tokens
+     above. Neither --color-efc-accent (#ff9640) nor --color-efc-red
+     (#e08a8a) has enough contrast against white to carry small bold button
+     text reliably (verified: WCAG contrast ratio ~2.2:1 and ~2.6:1
+     respectively, both fail the 4.5:1 AA threshold for text under 14pt
+     bold) — so these are separate, darker, fixed colors used only for that
+     one job, verified to pass 4.5:1 against white. Not swapped between
+     light/dark: a saturated filled button needs the same white-text
+     contrast in both themes. */
+  --color-efc-accent-solid: #b75808;         /* vs white: 4.76:1 */
+  --color-efc-accent-solid-bright: #a54c07;  /* vs white: 5.77:1 */
+  --color-efc-red-solid: #c23b3b;            /* vs white: 5.27:1 */
+  --color-efc-red-solid-bright: #a83232;     /* vs white: 6.63:1 */
+}
+
+/* ── Light theme ──────────────────────────────────────────────────────────── */
+/* Applied by setting data-theme="light" on <html> (see src/renderer/shared/
+   theme.ts). A real, from-scratch light palette — not a port of
+   silver-link's light mode, which is a deliberately jarring dev/QA debug
+   palette, not an actual product theme (see its own source comment). Kept:
+   the same brand identity — our own amber accent #ff9640/#ffbd7a stays
+   fixed across both modes; only surfaces/borders/text invert, mostly to
+   white/near-white and light grey, in the spirit of silver-link's actual
+   *structural* choices (white panels, light grey lines, near-black text)
+   without their off-brand lavender background or magenta danger color. */
+:root[data-theme="light"] {
+  --color-efc-bg: #f7f6f4;
+  --color-efc-bg-alt: #eeece9;
+  --color-efc-surface: #ffffff;
+  --color-efc-surface2: #f3f1ee;
+  --color-efc-border: #dcd9d4;
+  --color-efc-border-strong: #c7c3bc;
+  --color-efc-border-subtle: #e8e5e0;
+  --color-efc-border-dark: #d3cfc9;
+  --color-efc-text: #232220;
+  --color-efc-text-muted: #5c5954;
+  --color-efc-text-dim: #8b8781;
+  --color-efc-text-faint: #d3cfc9;
+  --color-efc-accent: #ff9640;
+  --color-efc-accent-bright: #e07a28;
+  /* Light, opaque accent fill (was a near-black brown in dark mode — that
+     only worked on a dark surface). Active tabs / checked-toggle track. */
+  --color-efc-accent-deep: #ffe3c2;
+  --color-efc-blue: #5c5954;
+  --color-efc-blue-bright: #232220;
+  --color-efc-red: #c23b3b;
+  --color-efc-red-bright: #a52e2e;
+  --color-efc-red-deep: #fbdede;
+  --color-efc-gold: #a3773a;
+  --color-efc-success: #2e8f4f;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */

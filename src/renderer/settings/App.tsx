@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppConfig } from '../shared/types'
 
 // ── Focus guard ───────────────────────────────────────────────────────────────
@@ -38,6 +38,22 @@ function useFlash() {
   return { flash, visible: msg }
 }
 
+// ── Card — the base surface every section groups into, replacing the old
+// flat full-bleed pane + hairline-divider look with the browser toolbar's
+// card language (rounded, bordered, its own background). ───────────────────
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col bg-efc-surface border border-efc-border rounded-lg overflow-hidden mb-3 last:mb-0">
+      <div className="px-3.5 py-2.5 text-[11px] font-bold tracking-[1.5px] uppercase text-efc-text-dim border-b border-efc-border">
+        {title}
+      </div>
+      <div className="px-3.5 py-1 flex flex-col">
+        {children}
+      </div>
+    </div>
+  )
+}
+
 // ── Slider row ────────────────────────────────────────────────────────────────
 function SliderRow({
   label, sub, value, min, max, step, format,
@@ -49,9 +65,9 @@ function SliderRow({
   onChange: (v: number) => void
 }) {
   return (
-    <div className="flex items-center gap-3 py-[9px] border-b border-efc-surface last:border-b-0">
+    <div className="flex items-center gap-3 py-[10px] border-b border-efc-border-subtle last:border-b-0">
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] text-efc-text-muted">{label}</div>
+        <div className="text-[13px] text-efc-text">{label}</div>
         {sub && <div className="text-[12px] text-efc-text-dim mt-[3px] leading-[1.4]">{sub}</div>}
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -71,95 +87,110 @@ function ToggleRow({ label, sub, checked, onChange }: {
   label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-center gap-3 py-[9px] border-b border-efc-surface last:border-b-0">
+    <div className="flex items-center gap-3 py-[10px] border-b border-efc-border-subtle last:border-b-0">
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] text-efc-text-muted">{label}</div>
+        <div className="text-[13px] text-efc-text">{label}</div>
         {sub && <div className="text-[12px] text-efc-text-dim mt-[3px] leading-[1.4]">{sub}</div>}
       </div>
       <label className="relative w-[38px] h-[20px] flex-shrink-0 cursor-pointer">
         <input type="checkbox" className="sr-only peer" checked={checked} onChange={e => onChange(e.target.checked)} />
-        <span className="absolute inset-0 bg-efc-surface border border-efc-border-subtle peer-checked:bg-efc-accent-deep peer-checked:border-efc-accent peer-checked:[&>span]:translate-x-[18px] peer-checked:[&>span]:bg-efc-accent transition-all">
-          <span className="absolute left-[2px] top-[2px] w-[14px] h-[14px] bg-efc-border translate-x-0 transition-all duration-150" />
+        <span className="absolute inset-0 bg-efc-blue/20 border border-efc-blue/30 peer-checked:bg-efc-accent/10 peer-checked:border-efc-accent peer-checked:[&>span]:translate-x-[18px] peer-checked:[&>span]:bg-efc-accent rounded-sm transition-all">
+          <span className="absolute left-[2px] top-[2px] w-[14px] h-[14px] bg-efc-blue translate-x-0 rounded-[1px] transition-all duration-150" />
         </span>
       </label>
     </div>
   )
 }
 
-// ── Action row ────────────────────────────────────────────────────────────────
-function ActionRow({ label, sub, btnLabel, danger, onClick, flashVisible }: {
-  label: string; sub?: string; btnLabel: string; danger?: boolean
-  onClick: () => void; flashVisible?: boolean
+// ── Segmented control (used for the Appearance theme picker) ───────────────
+function SegmentedRow<T extends string>({ label, sub, value, options, onChange }: {
+  label: string; sub?: string
+  value: T; options: { value: T; label: string }[]
+  onChange: (v: T) => void
 }) {
-  const okMsg = (() => {
-    if (!danger) return 'Done.'
-    if (btnLabel === 'Reset')  return 'All positions reset.'
-    if (btnLabel === 'Clear')  return 'Cleared.'
-    if (btnLabel === 'Clear All') return 'All data cleared.'
-    if (btnLabel === 'Reset')  return 'Vault data cleared.'
-    return 'Done.'
-  })()
-
   return (
-    <div className="flex flex-col border-b border-efc-surface last:border-b-0">
-      <div className="flex items-center gap-3 py-[9px]">
+    <div className="flex items-center gap-3 py-[10px] border-b border-efc-border-subtle last:border-b-0">
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] text-efc-text">{label}</div>
+        {sub && <div className="text-[12px] text-efc-text-dim mt-[3px] leading-[1.4]">{sub}</div>}
+      </div>
+      <div className="flex flex-shrink-0 border border-efc-border rounded-md overflow-hidden">
+        {options.map(o => (
+          <button key={o.value} onClick={() => onChange(o.value)}
+            className={`px-3 py-[5px] text-[11px] font-bold tracking-[0.5px] uppercase transition-colors ${
+              value === o.value
+                ? 'bg-efc-accent-solid text-white'
+                : 'bg-efc-bg-alt text-efc-text-muted hover:text-efc-text'
+            }`}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Action row ────────────────────────────────────────────────────────────────
+// `severe` marks an action as a broad/irreversible clear — instead of a
+// separate boxed "Danger Zone" wrapper, it's called out inline (bold red
+// warning line under the description) and the button itself reads as a
+// clearly clickable warning action, not a washed-out disabled-looking one.
+function ActionRow({ label, sub, warning, btnLabel, severe, onClick, flashVisible, okMessage }: {
+  label: string; sub?: string; warning?: string; btnLabel: string; severe?: boolean
+  onClick: () => void; flashVisible?: boolean; okMessage?: string
+}) {
+  return (
+    <div className="flex flex-col border-b border-efc-border-subtle last:border-b-0">
+      <div className="flex items-center gap-3 py-[10px]">
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] text-efc-text-muted">{label}</div>
+          <div className="text-[13px] text-efc-text">{label}</div>
           {sub && <div className="text-[12px] text-efc-text-dim mt-[3px] leading-[1.4]" dangerouslySetInnerHTML={{ __html: sub }} />}
+          {warning && <div className="text-[12px] text-efc-red font-bold mt-[3px] leading-[1.4]">{warning}</div>}
         </div>
         <button onClick={onClick}
-          className={`text-[11px] font-bold tracking-[1px] uppercase px-3 py-[5px] flex-shrink-0 border cursor-pointer transition-all ${
-            danger
-              ? 'bg-efc-bg text-efc-red/55 border-efc-red-deep hover:text-efc-red hover:border-efc-red/55 hover:bg-efc-red-deep'
-              : 'bg-efc-surface text-efc-text-muted border-efc-border hover:text-efc-text hover:border-efc-border hover:bg-efc-surface2'
+          className={`text-[11px] font-bold tracking-[1px] uppercase px-3.5 py-[7px] flex-shrink-0 rounded-md cursor-pointer transition-all ${
+            severe
+              ? 'bg-efc-red-solid text-white hover:bg-efc-red-solid-bright'
+              : 'bg-efc-accent-solid text-white hover:bg-efc-accent-solid-bright'
           }`}>
           {btnLabel}
         </button>
       </div>
-      <div className={`text-[12px] text-efc-success pb-1 transition-opacity duration-400 ${flashVisible ? 'opacity-100' : 'opacity-0'}`}>
-        {okMsg}
+      <div className={`text-[12px] text-efc-success overflow-hidden transition-all duration-400 ${flashVisible ? 'max-h-6 opacity-100 pb-2' : 'max-h-0 opacity-0'}`}>
+        {okMessage || 'Done.'}
       </div>
     </div>
   )
 }
 
-// ── Section label ─────────────────────────────────────────────────────────────
-function SectionLabel({ children }: { children: React.ReactNode }) {
+// ── Link row ──────────────────────────────────────────────────────────────────
+function LinkRow({ label, value, href, onOpen }: {
+  label: string; value: string; href?: string; onOpen?: (url: string) => void
+}) {
   return (
-    <div className="text-[11px] font-bold tracking-[1.8px] uppercase text-efc-text-dim pb-[5px] border-b border-efc-surface mb-[2px] mt-[18px] first:mt-0 flex-shrink-0">
-      {children}
+    <div className="flex items-center gap-3 py-[10px] border-b border-efc-border-subtle last:border-b-0">
+      <div className="text-[13px] text-efc-text-dim w-[110px] flex-shrink-0">{label}</div>
+      {href ? (
+        <button onClick={() => onOpen?.(href)}
+          className="text-[13px] text-efc-accent hover:text-efc-accent-bright text-left truncate transition-colors">
+          {value}
+        </button>
+      ) : (
+        <div className="text-[13px] text-efc-text truncate">{value}</div>
+      )}
     </div>
   )
 }
 
-// ── Danger zone ───────────────────────────────────────────────────────────────
-// Visually fences off the most severe destructive actions (irreversible,
-// broad-impact) from routine settings on the same tab — a red-bordered
-// block with its own label, instead of a bare red button sitting in the
-// normal flow where it's easy to click without registering the stakes.
-function DangerZone({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mt-4 px-3 border border-efc-red/55 bg-efc-red/5 rounded-sm">
-      <div className="flex items-center gap-1.5 pt-2.5 pb-1 text-[10px] font-bold tracking-[1.8px] uppercase text-efc-red">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
-          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        Danger Zone
-      </div>
-      {children}
-    </div>
-  )
-}
-
-type Tab = 'general' | 'windows' | 'cache' | 'extension'
+type Tab = 'general' | 'windows' | 'appearance' | 'cache' | 'about'
 
 const DEFAULT_CONFIG: AppConfig = {
   defaultOpacityMin: 0.5,
   defaultOpacityMax: 1.0,
   focusGuardMs: 500,
   closeOverlaysOnExit: true,
-  eveVaultEnabled: false
+  eveVaultEnabled: false,
+  theme: 'dark'
 }
 
 export default function App() {
@@ -170,8 +201,13 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('general')
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [loaded, setLoaded] = useState(false)
+  const [version, setVersion] = useState('')
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(() => {
+    api.settings.getVersion().then(setVersion).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api.settings.getAll().then(c => { setCfg({ ...DEFAULT_CONFIG, ...c }); setLoaded(true) })
@@ -204,16 +240,16 @@ export default function App() {
   }
 
   const tabCls = (t: Tab) =>
-    `py-[5px] px-3 text-[11px] font-bold tracking-[1.5px] uppercase border border-transparent cursor-pointer select-none transition-all duration-100 ${
-      tab === t ? 'text-efc-accent border-efc-accent bg-efc-accent-deep' : 'text-efc-text-muted bg-none hover:text-efc-text hover:bg-[rgba(255,255,255,0.04)]'
+    `pb-[7px] pt-[5px] text-[11px] font-bold tracking-[1px] uppercase cursor-pointer select-none transition-colors duration-100 border-b-2 ${
+      tab === t ? 'text-efc-accent border-efc-accent' : 'text-efc-text-muted border-transparent hover:text-efc-text'
     }`
 
-  if (!loaded) return <div className="flex items-center justify-center w-full h-full text-[13px] text-efc-text-muted">Loading…</div>
+  if (!loaded) return <div className="flex items-center justify-center w-full h-full text-[13px] text-efc-text-muted bg-efc-bg">Loading…</div>
 
   return (
-    <div className="flex flex-col w-full h-full select-none">
+    <div className="flex flex-col w-full h-full select-none bg-efc-bg">
       {/* Titlebar */}
-      <div className="h-[32px] flex-shrink-0 flex items-center justify-between px-2 bg-efc-bg border border-efc-border drag">
+      <div className="h-[32px] flex-shrink-0 flex items-center justify-between px-2 bg-efc-bg border-b border-efc-border drag">
         <div className="text-[14px] font-bold uppercase text-efc-text">Settings</div>
         <div className="no-drag">
           <svg onClick={() => api.settings.close()} className="w-5 h-5 cursor-pointer opacity-70 hover:opacity-100 transition-opacity" viewBox="0 0 24 24">
@@ -224,109 +260,145 @@ export default function App() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-[2px] pt-2 px-2.5 pb-0 bg-efc-surface border-l border-r border-efc-border border-b border-b-efc-border-dark flex-shrink-0">
-        {(['general', 'windows', 'cache', 'extension'] as Tab[]).map(t => (
+      <div className="flex gap-4 px-3 bg-efc-bg border-b border-efc-border-subtle flex-shrink-0">
+        {(['general', 'windows', 'appearance', 'cache', 'about'] as Tab[]).map(t => (
           <button key={t} className={tabCls(t)} onClick={() => setTab(t)}>
-            {t === 'general' ? 'General' : t === 'windows' ? 'Windows' : t === 'cache' ? 'Cache' : 'Extension'}
+            {t === 'general' ? 'General' : t === 'windows' ? 'Windows' : t === 'appearance' ? 'Appearance' : t === 'cache' ? 'Cache' : 'About'}
           </button>
         ))}
       </div>
 
       {/* Pane area */}
-      <div className="flex-1 min-h-0 bg-efc-surface border-l border-r border-b border-efc-border overflow-y-auto
+      <div className="flex-1 min-h-0 bg-efc-bg px-2.5 pb-2.5 overflow-y-auto
         [scrollbar-width:thin] [scrollbar-color:var(--color-efc-border)_transparent]
         [&::-webkit-scrollbar]:w-[5px] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-efc-border [&::-webkit-scrollbar-thumb:hover]:bg-efc-border">
 
         {/* ── General ── */}
         {tab === 'general' && (
-          <div className="p-3.5 flex flex-col">
-            <SectionLabel>Default Opacity</SectionLabel>
-            <SliderRow label="Min opacity" sub="Faded level when idle / not hovered. Applied when a window is opened for the first time."
-              value={Math.round(cfg.defaultOpacityMin * 100)} min={0} max={90} step={5}
-              format={v => v + '%'} onChange={setSliderMin} />
-            <SliderRow label="Max opacity" sub="Opacity when hovered or focused."
-              value={Math.round(cfg.defaultOpacityMax * 100)} min={10} max={100} step={5}
-              format={v => v + '%'} onChange={setSliderMax} />
-
-            <SectionLabel>Focus Guard</SectionLabel>
-            <SliderRow label="Click ignore delay"
-              sub="Swallows the first click when a window gains focus. Prevents accidental clicks when a game warps the cursor on alt-tab."
-              value={cfg.focusGuardMs} min={0} max={1000} step={50}
-              format={v => v + 'ms'}
-              onChange={v => setDebounced('focusGuardMs', v)} />
-          </div>
+          <>
+            <Card title="Default Opacity">
+              <SliderRow label="Min opacity" sub="Faded level when idle / not hovered. Applied when a window is opened for the first time."
+                value={Math.round(cfg.defaultOpacityMin * 100)} min={0} max={90} step={5}
+                format={v => v + '%'} onChange={setSliderMin} />
+              <SliderRow label="Max opacity" sub="Opacity when hovered or focused."
+                value={Math.round(cfg.defaultOpacityMax * 100)} min={10} max={100} step={5}
+                format={v => v + '%'} onChange={setSliderMax} />
+            </Card>
+            <Card title="Focus Guard">
+              <SliderRow label="Click ignore delay"
+                sub="Swallows the first click when a window gains focus. Prevents accidental clicks when a game warps the cursor on alt-tab."
+                value={cfg.focusGuardMs} min={0} max={1000} step={50}
+                format={v => v + 'ms'}
+                onChange={v => setDebounced('focusGuardMs', v)} />
+            </Card>
+          </>
         )}
 
         {/* ── Windows ── */}
         {tab === 'windows' && (
-          <div className="p-3.5 flex flex-col">
-            <SectionLabel>Behaviour</SectionLabel>
-            <ToggleRow label="Close all overlays when menu closes"
-              sub="When off, overlay windows keep running after the menu is closed."
-              checked={cfg.closeOverlaysOnExit}
-              onChange={v => set('closeOverlaysOnExit', v)} />
-
-            <SectionLabel>Saved Positions</SectionLabel>
-            <DangerZone>
+          <>
+            <Card title="Behaviour">
+              <ToggleRow label="Close all overlays when menu closes"
+                sub="When off, overlay windows keep running after the menu is closed."
+                checked={cfg.closeOverlaysOnExit}
+                onChange={v => set('closeOverlaysOnExit', v)} />
+            </Card>
+            <Card title="Saved Positions">
               <ActionRow label="Reset all window positions"
                 sub="Clears saved positions, sizes, opacity and pin state. Windows reopen at their default size next time."
-                btnLabel="Reset" danger
+                warning="This affects every saved window — cannot be undone."
+                btnLabel="Reset" severe
                 onClick={() => { api.settings.clearBounds(); flash('bounds') }}
-                flashVisible={visible['bounds']} />
-            </DangerZone>
-          </div>
+                flashVisible={visible['bounds']} okMessage="All positions reset." />
+            </Card>
+          </>
+        )}
+
+        {/* ── Appearance ── */}
+        {tab === 'appearance' && (
+          <Card title="Theme">
+            <SegmentedRow label="Appearance" sub="Switches every SilverVision window immediately — no restart needed."
+              value={cfg.theme}
+              options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]}
+              onChange={v => set('theme', v)} />
+          </Card>
         )}
 
         {/* ── Cache ── */}
         {tab === 'cache' && (
-          <div className="p-3.5 flex flex-col">
-            <SectionLabel>Webview Session</SectionLabel>
-            <ActionRow label="Clear webview cache"
-              sub="Removes cached files, cookies and storage for all overlay windows. Takes effect after restart."
-              btnLabel="Clear" danger
-              onClick={() => { api.settings.clearSession(); flash('session') }}
-              flashVisible={visible['session']} />
+          <>
+            <Card title="Webview Session">
+              <ActionRow label="Clear webview cache"
+                sub="Removes cached files, cookies and storage for all overlay windows. Takes effect after restart."
+                warning="Clears cache for every open app — cannot be undone."
+                btnLabel="Clear" severe
+                onClick={() => { api.settings.clearSession(); flash('session') }}
+                flashVisible={visible['session']} okMessage="Cleared." />
+            </Card>
 
-            <SectionLabel>Menu Data</SectionLabel>
-            <ActionRow label="Clear custom menu items"
-              sub='Removes all links added via the <span style="color:var(--color-efc-text-dim)">+</span> button.'
-              btnLabel="Clear" danger
-              onClick={() => { api.settings.clearCustomItems(); flash('custom') }}
-              flashVisible={visible['custom']} />
+            <Card title="Menu Data">
+              <ActionRow label="Clear custom menu items"
+                sub='Removes all links added via the <span style="color:var(--color-efc-text-dim)">+</span> button.'
+                warning="Removes every custom link — cannot be undone."
+                btnLabel="Clear" severe
+                onClick={() => { api.settings.clearCustomItems(); flash('custom') }}
+                flashVisible={visible['custom']} okMessage="Cleared." />
+            </Card>
 
-            <SectionLabel>Full Reset</SectionLabel>
-            <DangerZone>
+            <Card title="Eve Vault">
+              <ActionRow label="Reset vault data"
+                sub="Clears all stored accounts, wallets and keys from Eve Vault. You will need to re-import your wallet after this."
+                warning="Deletes all wallet data — cannot be undone."
+                btnLabel="Reset" severe
+                onClick={() => { api.settings.clearVaultData(); flash('vault') }}
+                flashVisible={visible['vault']} okMessage="Vault data cleared." />
+            </Card>
+
+            <Card title="Full Reset">
               <ActionRow label="Clear all app data"
                 sub="Resets all settings, window positions, session data and custom menu items to defaults."
-                btnLabel="Clear All" danger
+                warning="This clears everything in SilverVision — cannot be undone."
+                btnLabel="Clear All" severe
                 onClick={async () => {
                   api.settings.clearAll()
                   const fresh = await api.settings.getAll()
                   setCfg({ ...DEFAULT_CONFIG, ...fresh })
                   flash('all')
                 }}
-                flashVisible={visible['all']} />
-            </DangerZone>
-          </div>
+                flashVisible={visible['all']} okMessage="All data cleared." />
+            </Card>
+          </>
         )}
 
-        {/* ── Extension ── */}
-        {tab === 'extension' && (
-          <div className="p-3.5 flex flex-col">
-            <SectionLabel>Eve Vault</SectionLabel>
-            <ActionRow label="Open vault popup"
-              sub="Opens the Eve Vault popup to manage wallets, accounts or unlock the vault."
-              btnLabel="Open"
-              onClick={() => api.extension.openPopup()}
-              flashVisible={false} />
-            <DangerZone>
-              <ActionRow label="Reset vault data"
-                sub="Clears all stored accounts, wallets and keys from Eve Vault. You will need to re-import your wallet after this."
-                btnLabel="Reset" danger
-                onClick={() => { api.settings.clearVaultData(); flash('vault') }}
-                flashVisible={visible['vault']} />
-            </DangerZone>
-          </div>
+        {/* ── About ── */}
+        {tab === 'about' && (
+          <>
+            <Card title="SilverVision">
+              <LinkRow label="Version" value={version || '—'} />
+              <LinkRow label="Repository" value="github.com/immatoll/silver-vision"
+                href="https://github.com/immatoll/silver-vision" onOpen={api.settings.openExternal} />
+              <LinkRow label="Author" value="immatoll (Christian Remy)" />
+              <LinkRow label="License" value="MIT — see LICENSE in the repository" />
+            </Card>
+
+            <Card title="Third-Party Components">
+              <div className="text-[12px] text-efc-text-dim leading-[1.5] py-[10px]">
+                Bundles the <span className="text-efc-text">EveVault</span> wallet browser extension
+                and other vendored components, each under their own respective owners' terms — not
+                covered by SilverVision's own MIT license. See the repository's LICENSE file for
+                details.
+              </div>
+            </Card>
+
+            <Card title="Special Thanks">
+              <LinkRow label="ProtoDroidBot" value="github.com/ProtoDroidBot"
+                href="https://github.com/ProtoDroidBot" onOpen={api.settings.openExternal} />
+              <div className="text-[12px] text-efc-text-dim leading-[1.5] pb-[10px]">
+                For contributing the fix that made EveVault transaction confirmations reliable
+                inside SilverVision's Electron build.
+              </div>
+            </Card>
+          </>
         )}
       </div>
     </div>

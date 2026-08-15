@@ -163,14 +163,14 @@ function createEveVaultApprovalRecoveryScript(options = {}) {
           if (!confirmation || confirmation.confirmed !== true) return 'retry';
 
           await clearMatchingApproval(pending, result);
-          console.info('[EFC] Recovered EVE Vault approval result', {
+          console.info('[SilverVision] Recovered EVE Vault approval result', {
             id: pending.id,
             type: delivery.message.type
           });
           return 'delivered';
         })()
           .catch((error) => {
-            console.error('[EFC] Failed to recover EVE Vault approval result', error);
+            console.error('[SilverVision] Failed to recover EVE Vault approval result', error);
             return 'retry';
           })
           .finally(() => {

@@ -12,6 +12,7 @@ const api = {
   menu: {
     openSettings:  () => ipcRenderer.send('menu:openSettings'),
     openAppStore:  () => ipcRenderer.send('menu:openAppStore'),
+    openBrowser:   () => ipcRenderer.send('menu:openBrowser'),
     openOverlay:   (opts: { title: string; url?: string; width?: number; height?: number }) =>
                        ipcRenderer.send('menu:openOverlay', opts),
     closeOverlay:  (key: string) => ipcRenderer.send('overlay:close', key),
@@ -25,6 +26,8 @@ const api = {
     onSettingsClosed: (cb: () => void)          => ipcRenderer.on('settings:closed', cb),
     onAppStoreOpened: (cb: () => void)          => ipcRenderer.on('appstore:opened', cb),
     onAppStoreClosed: (cb: () => void)          => ipcRenderer.on('appstore:closed', cb),
+    onBrowserOpened:  (cb: () => void)          => ipcRenderer.on('browser:opened', cb),
+    onBrowserClosed:  (cb: () => void)          => ipcRenderer.on('browser:closed', cb),
     onOverlayOpened:  (cb: (key: string) => void) => ipcRenderer.on('overlay:opened', (_e, key) => cb(key)),
     onOverlayClosed:  (cb: (key: string) => void) => ipcRenderer.on('overlay:closed', (_e, key) => cb(key)),
     onItemsChanged:   (cb: (items: MenuItem[]) => void) => ipcRenderer.on('menu:itemsChanged', (_e, items) => cb(items)),
@@ -42,6 +45,11 @@ const api = {
   // ── App Store ─────────────────────────────────────────────────────────────
   appstore: {
     fetchCatalog: (url: string) => ipcRenderer.invoke('appstore:fetchCatalog', url) as Promise<{ ok: boolean; text?: string; error?: string }>,
+    getCustomApps:    () => ipcRenderer.invoke('appstore:getCustomApps') as Promise<CustomApp[]>,
+    upsertCustomApp:  (appData: Partial<CustomApp>) => ipcRenderer.invoke('appstore:upsertCustomApp', appData) as Promise<{ ok: boolean; error?: string; app?: CustomApp }>,
+    removeCustomApp:  (id: string) => ipcRenderer.invoke('appstore:removeCustomApp', { id }) as Promise<{ ok: boolean }>,
+    onCustomAppsChanged: (cb: (apps: CustomApp[]) => void) =>
+                             ipcRenderer.on('appstore:customAppsChanged', (_e, apps) => cb(apps)),
   },
 
   // ── Catalog (catalog.json) ────────────────────────────────────────────────
@@ -53,6 +61,7 @@ const api = {
   // ── Settings ──────────────────────────────────────────────────────────────
   settings: {
     getAll:          () => ipcRenderer.invoke('settings:getAll') as Promise<AppConfig>,
+    getVersion:      () => ipcRenderer.invoke('settings:getVersion') as Promise<string>,
     set:             (key: string, value: unknown) => ipcRenderer.send('settings:set', key, value),
     close:           () => ipcRenderer.send('settings:close'),
     clearBounds:     () => ipcRenderer.send('settings:clearBounds'),
@@ -60,6 +69,9 @@ const api = {
     clearCustomItems:() => ipcRenderer.send('settings:clearCustomItems'),
     clearAll:        () => ipcRenderer.send('settings:clearAll'),
     clearVaultData:  () => ipcRenderer.send('settings:clearVaultData'),
+    onThemeChanged:  (cb: (theme: 'dark' | 'light') => void) =>
+                         ipcRenderer.on('settings:themeChanged', (_e, theme) => cb(theme)),
+    openExternal:    (url: string) => ipcRenderer.send('settings:openExternal', url),
   },
 
   // ── Overlay window chrome ─────────────────────────────────────────────────
@@ -82,6 +94,21 @@ const api = {
   settingsPanel: {
     setOpacityRange: (min: number, max: number) =>
                          ipcRenderer.send('window:setOpacityRange', { min, max }),
+    onShown: (cb: () => void) => ipcRenderer.on('settingsPanel:shown', cb),
+  },
+
+  // ── Browser toolbar (tabs, URL/search bar, back/forward/reload) ──────────
+  browser: {
+    newTab:      (url?: string)            => ipcRenderer.send('browser:newTab', url),
+    closeTab:    (tabId: string)           => ipcRenderer.send('browser:closeTab', tabId),
+    activateTab: (tabId: string)           => ipcRenderer.send('browser:activateTab', tabId),
+    navigate:    (tabId: string, input: string) => ipcRenderer.send('browser:navigate', { tabId, input }),
+    goBack:      (tabId: string)           => ipcRenderer.send('browser:goBack', tabId),
+    goForward:   (tabId: string)           => ipcRenderer.send('browser:goForward', tabId),
+    reload:      (tabId: string)           => ipcRenderer.send('browser:reload', tabId),
+    stop:        (tabId: string)           => ipcRenderer.send('browser:stop', tabId),
+    onTabsChanged: (cb: (state: BrowserTabsState) => void) =>
+                       ipcRenderer.on('browser:tabsChanged', (_e, state) => cb(state)),
   },
 }
 
@@ -94,6 +121,17 @@ interface MenuItem {
   name: string
   url: string
   icon?: string
+  width?: number
+  height?: number
+  category?: string
+}
+
+interface CustomApp {
+  id: string
+  name: string
+  url: string
+  icon?: string
+  description?: string
   width?: number
   height?: number
   category?: string
@@ -117,4 +155,20 @@ interface AppConfig {
   focusGuardMs: number
   closeOverlaysOnExit: boolean
   eveVaultEnabled: boolean
+  theme: 'dark' | 'light'
+}
+
+interface BrowserTab {
+  id: string
+  url: string
+  title: string
+  favicon: string
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+interface BrowserTabsState {
+  activeTabId: string | null
+  tabs: BrowserTab[]
 }
