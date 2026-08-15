@@ -9,7 +9,13 @@ export default defineConfig({
     build: {
       outDir: 'dist/main',
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.js') }
+        input: {
+          index: resolve(__dirname, 'src/main/index.js'),
+          'eve-vault-approval-recovery': resolve(
+            __dirname,
+            'src/main/eve-vault-approval-recovery.js'
+          )
+        }
       }
     }
   },
@@ -21,7 +27,8 @@ export default defineConfig({
         input: {
           index:     resolve(__dirname, 'src/preload/index.ts'),
           extension: resolve(__dirname, 'src/preload/extension.js'),
-          keeper:    resolve(__dirname, 'src/preload/keeper.js')
+          keeper:    resolve(__dirname, 'src/preload/keeper.js'),
+          overlay:   resolve(__dirname, 'src/preload/overlay.js')
         }
       }
     }

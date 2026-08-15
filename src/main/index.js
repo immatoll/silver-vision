@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, net, screen, session, webContents, WebConte
 const fs   = require('fs')
 const path = require('path')
 const { pathToFileURL } = require('url')
+const { createEveVaultApprovalRecoveryScript } = require('./eve-vault-approval-recovery')
 
 const EXTENSION_PATH = path.join(__dirname, '../../extension', 'eve-vault-0.14')
   .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`)
@@ -27,6 +28,7 @@ let _oauthPopupWindow  = null
 // ---------------------------------------------------------------------------
 const RENDERER_URL = process.env['ELECTRON_RENDERER_URL']
 const PRELOAD_PATH = path.join(__dirname, '../preload/index.js')
+const OVERLAY_PRELOAD_PATH = path.join(__dirname, '../preload/overlay.js')
 
 function loadRenderer(win, page, query = {}) {
   if (RENDERER_URL) {
@@ -78,22 +80,35 @@ function createKeeperWindow(extId) {
   })
   _keeperWindow.loadURL(`chrome-extension://${extId}/keeper.html`)
   _keeperWindow.webContents.on('did-finish-load', () => {
-    _keeperWindow.webContents.executeJavaScript(`
+    const keeperMessageBridge = _keeperWindow.webContents.executeJavaScript(`
       (function() {
         if (typeof chrome === 'undefined' || !chrome.runtime) return;
-        chrome.runtime.onMessage.addListener(function(msg) {
+        chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
           if (!msg || typeof window.__efcKeeperIpc === 'undefined') return false;
           if (msg.type === 'OPEN_VAULT_WINDOW' && msg.url) {
             window.__efcKeeperIpc.openWindow(msg.url);
           } else if (msg.type === 'OPEN_OAUTH_POPUP' && msg.url) {
             window.__efcKeeperIpc.openOAuthPopup(msg.url);
           } else if (msg.type === 'RELAY_TAB_MESSAGE' && msg.message) {
-            window.__efcKeeperIpc.relayTabMessage(msg.message);
+            window.__efcKeeperIpc.relayTabMessage({
+              tabId: msg.tabId,
+              message: msg.message
+            }).then(sendResponse, function(error) {
+              sendResponse({
+                ok: false,
+                confirmed: false,
+                error: error && error.message ? error.message : String(error)
+              });
+            });
+            return true;
           }
           return false;
         });
       })();
-    `).catch(e => console.error('[EFC] Failed to inject keeper message relay:', e))
+    `)
+    keeperMessageBridge
+      .then(() => _keeperWindow.webContents.executeJavaScript(createEveVaultApprovalRecoveryScript()))
+      .catch(e => console.error('[EFC] Failed to inject keeper integration:', e))
   })
   _keeperWindow.on('closed', () => { _keeperWindow = null })
 }
@@ -213,6 +228,167 @@ const windowAnimators         = new Map()
 const openOverlays            = new Map()
 const overlayKeys             = new Map()
 const collapseRestoreHeights  = new Map()
+const pendingEveVaultRequests = new Map()
+
+const EVE_VAULT_REQUEST_TTL_MS = 2 * 60 * 1000
+const EVE_VAULT_TOKEN_FIELDS = new Set([
+  'token',
+  'access_token',
+  'id_token',
+  'refresh_token',
+  'refresh_token_id'
+])
+const EVE_VAULT_SIGNING_ERROR_TYPES = new Set([
+  'sign_error',
+  'sign_transaction_error',
+  'sign_personal_message_error',
+  'sign_and_execute_transaction_error',
+  'sign_sponsored_transaction_error'
+])
+
+function isPlainRecord(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && !ArrayBuffer.isView(value)
+}
+
+function hasNoEveVaultTokenMaterial(value) {
+  if (Array.isArray(value)) return value.every(hasNoEveVaultTokenMaterial)
+  if (!isPlainRecord(value)) return true
+  return Object.entries(value).every(([key, child]) =>
+    !EVE_VAULT_TOKEN_FIELDS.has(key) && hasNoEveVaultTokenMaterial(child)
+  )
+}
+
+function isValidEveVaultRequestId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+}
+
+function isAllowedEveVaultPageResponse(message) {
+  if (!isPlainRecord(message) || !hasNoEveVaultTokenMaterial(message)) return false
+
+  if (message.event === 'change') return isPlainRecord(message.payload)
+  if (!isValidEveVaultRequestId(message.id) || typeof message.type !== 'string') return false
+
+  if (message.type === 'auth_success') {
+    return (
+      (message.chain === undefined || typeof message.chain === 'string') &&
+      (message.address === undefined || typeof message.address === 'string') &&
+      (message.publicKey === undefined || typeof message.publicKey === 'string')
+    )
+  }
+  if (message.type === 'auth_error') return message.error !== undefined
+  if (message.type === 'sign_success') {
+    return (
+      (typeof message.bytes === 'string' || typeof message.digest === 'string') &&
+      (typeof message.signature === 'string' || typeof message.effects === 'string')
+    )
+  }
+  if (message.type === 'sign_and_execute_transaction_success') return isPlainRecord(message.result)
+  if (EVE_VAULT_SIGNING_ERROR_TYPES.has(message.type)) return message.error !== undefined
+  if (message.type === 'disconnect_success') return true
+  return message.type === 'disconnect_error' && message.error !== undefined
+}
+
+function getOverlayEntryByWebContents(sender) {
+  for (const [windowId, entry] of overlayContentViews) {
+    if (entry.view?.webContents === sender) return { windowId, entry }
+  }
+  return null
+}
+
+function getOverlayEntryByWebContentsId(webContentsId) {
+  for (const [windowId, entry] of overlayContentViews) {
+    if (entry.view?.webContents?.id === webContentsId) return { windowId, entry }
+  }
+  return null
+}
+
+function getPageOrigin(url) {
+  try {
+    const parsed = new URL(url)
+    return parsed.origin && parsed.origin !== 'null' ? parsed.origin : null
+  } catch (_) {
+    return null
+  }
+}
+
+function clearTrackedEveVaultRequestsForWebContents(webContentsId) {
+  for (const [requestId, pending] of pendingEveVaultRequests) {
+    if (pending.webContentsId === webContentsId) pendingEveVaultRequests.delete(requestId)
+  }
+}
+
+function getTrackedEveVaultTarget(requestId) {
+  const pending = pendingEveVaultRequests.get(requestId)
+  if (!pending) return null
+  if (pending.expiresAt <= Date.now()) {
+    pendingEveVaultRequests.delete(requestId)
+    return null
+  }
+
+  const target = getOverlayEntryByWebContentsId(pending.webContentsId)
+  if (!target || getPageOrigin(target.entry.view.webContents.getURL()) !== pending.origin) {
+    pendingEveVaultRequests.delete(requestId)
+    return null
+  }
+  return target
+}
+
+function createConfirmedEveVaultResponseScript(message) {
+  const pageMessage = { ...message, __from: 'Eve Vault' }
+  const serializedMessage = JSON.stringify(pageMessage)
+  const expectedId = JSON.stringify(message.id ?? null)
+  const expectedType = JSON.stringify(message.type ?? null)
+  const expectedEvent = JSON.stringify(message.event ?? null)
+
+  return `
+    (() => new Promise((resolve) => {
+      const message = ${serializedMessage};
+      const expectedId = ${expectedId};
+      const expectedType = ${expectedType};
+      const expectedEvent = ${expectedEvent};
+      const targetOrigin = window.location.origin;
+      if (!targetOrigin || targetOrigin === 'null') {
+        resolve({ confirmed: false, error: 'opaque-page-origin' });
+        return;
+      }
+
+      let settled = false;
+      let timer = null;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        window.removeEventListener('message', onConfirmation);
+        resolve(result);
+      };
+      const onConfirmation = (event) => {
+        if (event.source !== window || event.origin !== targetOrigin) return;
+        const data = event.data;
+        if (!data || data.__from !== 'Eve Vault') return;
+        if (expectedId !== null && data.id !== expectedId) return;
+        if (expectedType !== null && data.type !== expectedType) return;
+        if (expectedEvent !== null && data.event !== expectedEvent) return;
+        finish({ confirmed: true, origin: targetOrigin });
+      };
+
+      window.addEventListener('message', onConfirmation);
+      timer = setTimeout(() => finish({
+        confirmed: false,
+        origin: targetOrigin,
+        error: 'page-confirmation-timeout'
+      }), 1500);
+      try {
+        window.postMessage(message, targetOrigin);
+      } catch (error) {
+        finish({
+          confirmed: false,
+          origin: targetOrigin,
+          error: error && error.message ? error.message : String(error)
+        });
+      }
+    }))()
+  `
+}
 
 function makeFadeController(win, minOpacity = 0.1) {
   let fadeTimer    = null
@@ -532,6 +708,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
           session: session.fromPartition('persist:overlay'),
           contextIsolation: true,
           nodeIntegration: false,
+          preload: OVERLAY_PRELOAD_PATH,
           devTools: AUTO_OPEN_OVERLAY_DEVTOOLS
         }
       })
@@ -569,6 +746,9 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
       if (AUTO_OPEN_OVERLAY_DEVTOOLS) {
         try { _contentView.webContents.openDevTools({ mode: 'detach' }) } catch (_) {}
       }
+      _contentView.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+        if (isMainFrame !== false) clearTrackedEveVaultRequestsForWebContents(_contentView.webContents.id)
+      })
       overlayContentViews.set(win.id, { view: _contentView, updateBounds: updateViewBounds })
     } catch (err) {
       console.error('[EFC] Failed to create WebContentsView for overlay:', err)
@@ -661,6 +841,7 @@ function createOverlayWindow({ title = 'Overlay', url = '', width = 800, height 
     try {
       const cvEntry = overlayContentViews.get(win.id)
       if (cvEntry?.view) {
+        clearTrackedEveVaultRequestsForWebContents(cvEntry.view.webContents.id)
         try { cvEntry.view.webContents.close() } catch (_) {}
         try { win.contentView.removeChildView(cvEntry.view) } catch (_) {}
       }
@@ -1152,25 +1333,103 @@ function openExtensionWindow(url, opts = {}) {
   return win
 }
 
-// Relays a background.js -> tab message (normally chrome.tabs.sendMessage,
-// which the extension uses to tell a dApp page its transaction result) by
-// injecting the equivalent window.postMessage directly into every open
-// overlay's WebContentsView. Electron's chrome.tabs doesn't appear to track
-// WebContentsView-hosted content as an addressable tab, so the extension's
-// own delivery silently no-ops — the transaction succeeds but the page never
-// hears about it and sits in a "working" state forever. This bypasses that
-// broken hop entirely, mirroring exactly what the extension's own content
-// script (content.ts's forwardToPage/postToPage) would have sent.
-ipcMain.on('extension:relayTabMessage', (_event, message) => {
-  if (!message || typeof message !== 'object') return
-  console.log('[EFC] relaying tab message directly into overlay page(s):', message)
-  const payload = JSON.stringify({ ...message, __from: 'Eve Vault' })
-  for (const { view } of overlayContentViews.values()) {
+// The overlay preload binds each public Wallet Standard request id to its
+// initiating WebContentsView. Responses are validated, routed to that dApp
+// only, and acknowledged after the page observes the postMessage event.
+ipcMain.on('extension:trackDappRequest', (event, request) => {
+  if (!isPlainRecord(request) || !isValidEveVaultRequestId(request.id)) return
+  const source = getOverlayEntryByWebContents(event.sender)
+  if (!source) return
+
+  const origin = getPageOrigin(event.sender.getURL())
+  if (!origin) return
+
+  const existing = pendingEveVaultRequests.get(request.id)
+  if (
+    existing &&
+    existing.expiresAt > Date.now() &&
+    existing.webContentsId !== event.sender.id
+  ) {
+    console.warn('[EFC] Ignoring duplicate EveVault request id from another overlay:', request.id)
+    return
+  }
+
+  pendingEveVaultRequests.set(request.id, {
+    webContentsId: event.sender.id,
+    origin,
+    expiresAt: Date.now() + EVE_VAULT_REQUEST_TTL_MS
+  })
+})
+
+ipcMain.handle('extension:relayTabMessage', async (event, request) => {
+  if (!_keeperWindow || _keeperWindow.isDestroyed() || event.sender !== _keeperWindow.webContents) {
+    return { ok: false, confirmed: false, error: 'untrusted-relay-sender' }
+  }
+  if (!isPlainRecord(request) || !isAllowedEveVaultPageResponse(request.message)) {
+    return { ok: false, confirmed: false, error: 'invalid-page-response' }
+  }
+
+  const { message } = request
+  const requestId = isValidEveVaultRequestId(message.id) ? message.id : null
+  let targets = []
+
+  if (message.event === 'change') {
+    targets = Array.from(overlayContentViews, ([windowId, entry]) => ({ windowId, entry }))
+  } else if (requestId) {
+    const tracked = getTrackedEveVaultTarget(requestId)
+    if (tracked) targets = [tracked]
+  }
+
+  if (targets.length === 0 && Number.isInteger(request.tabId)) {
+    const byTabId = getOverlayEntryByWebContentsId(request.tabId)
+    if (byTabId) targets = [byTabId]
+  }
+
+  // Covers a request emitted before the tracking preload initialized while
+  // avoiding the cross-dApp response leak of the old broadcast behavior.
+  if (targets.length === 0 && overlayContentViews.size === 1) {
+    targets = Array.from(overlayContentViews, ([windowId, entry]) => ({ windowId, entry }))
+  }
+
+  if (targets.length === 0) {
+    return { ok: false, confirmed: false, error: 'target-overlay-not-found' }
+  }
+
+  let script
+  try {
+    script = createConfirmedEveVaultResponseScript(message)
+  } catch (error) {
+    return {
+      ok: false,
+      confirmed: false,
+      error: error?.message || String(error)
+    }
+  }
+
+  const results = await Promise.all(targets.map(async ({ entry }) => {
     try {
-      view.webContents.executeJavaScript(
-        `window.postMessage(${payload}, window.location.origin)`
-      ).catch(() => {})
-    } catch (_) {}
+      const result = await entry.view.webContents.executeJavaScript(script)
+      return result?.confirmed === true
+    } catch (_) {
+      return false
+    }
+  }))
+  const confirmedCount = results.filter(Boolean).length
+
+  if (requestId && confirmedCount > 0) pendingEveVaultRequests.delete(requestId)
+  console.log('[EFC] EveVault page response relay:', {
+    id: requestId,
+    type: message.type || message.event,
+    targetCount: targets.length,
+    confirmedCount
+  })
+
+  return {
+    ok: confirmedCount > 0,
+    confirmed: confirmedCount > 0,
+    targetCount: targets.length,
+    confirmedCount,
+    ...(confirmedCount === 0 && { error: 'page-response-not-confirmed' })
   }
 })
 
