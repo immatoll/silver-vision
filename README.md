@@ -2,6 +2,8 @@
 
 An Electron desktop shell for [EVE Frontier](https://www.evefrontier.com/), providing a windowed "app store" experience for launching and managing frontier apps, with a built-in [EveVault](https://github.com/evefrontier/evevault) wallet browser extension for signing transactions.
 
+![SilverVision screenshot](docs/logo/readme_promo.png)
+
 ## Features
 
 - **App store menu** — browse and launch a catalog of frontier apps as individual, movable windows, or add your own custom entries.
