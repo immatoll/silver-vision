@@ -2194,8 +2194,27 @@ app.on('browser-window-created', (_event, win) => {
   function showIfVault(url) {
     if (_eveVaultExtId && url &&
         url.startsWith(`chrome-extension://${_eveVaultExtId}/`) &&
-        !url.includes('/keeper.html')) {
-      win.show(); win.focus()
+        !url.includes('/keeper.html') && !win._vaultAlwaysOnTopSetup) {
+      win._vaultAlwaysOnTopSetup = true
+      // Windows opened via chrome.windows.create() from the extension's
+      // background script (e.g. the EVE Frontier login popup) bypass our
+      // setWindowOpenHandler/did-create-window hooks entirely — Electron's
+      // extensions support creates them directly. Left as plain windows,
+      // they can never appear above the alwaysOnTop vault PIN popup that
+      // triggered them, so they open invisibly behind it. Make them
+      // alwaysOnTop too so normal z-ordering has them win on show/focus.
+      try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+      setupAlwaysOnTopBehavior(win)
+      win.show(); win.moveTop(); win.focus()
+      if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed()) {
+        _vaultPopupWindow._activeChildPopup = win
+        win.on('closed', () => {
+          if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed() && _vaultPopupWindow._activeChildPopup === win) {
+            _vaultPopupWindow._activeChildPopup = null
+            try { _vaultPopupWindow.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+          }
+        })
+      }
     }
   }
   win.webContents.once('did-navigate', (_e, url) => showIfVault(url))
