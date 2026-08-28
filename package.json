@@ -13,6 +13,9 @@
   "build": {
     "appId": "com.silvervision.id",
     "productName": "SilverVision",
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**",
       "apps/**",
