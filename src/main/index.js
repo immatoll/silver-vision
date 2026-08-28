@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, net, screen, session, shell, webContents, W
 const fs   = require('fs')
 const path = require('path')
 const { pathToFileURL } = require('url')
+const { execFile } = require('child_process')
+const os = require('os')
 const { createEveVaultApprovalRecoveryScript } = require('./eve-vault-approval-recovery')
 
 const EXTENSION_PATH = path.join(__dirname, '../../extension', 'eve-vault-0.14')
@@ -680,6 +682,57 @@ function setupAlwaysOnTopBehavior(win) {
       try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
     }
   })
+}
+
+const KWIN_SCRIPT_ID = 'silvervisionkeepabove'
+const KWIN_SCRIPT_METADATA = JSON.stringify({
+  KPlugin: {
+    Id: KWIN_SCRIPT_ID,
+    Name: 'SilverVision Keep Above',
+    Description: 'Keeps the SilverVision window above others (works around a Wayland limitation Electron cannot solve itself)'
+  },
+  KPackageStructure: 'KWin/Script',
+  'X-KDE-ServiceTypes': ['KWin/Script'],
+  'X-Plasma-API': 'javascript',
+  'X-KDE-ParentApp': 'kwin'
+}, null, 2)
+const KWIN_SCRIPT_MAIN_JS = `function applyTo(client) {
+  if (client && client.resourceClass === 'silvervision' && !client.keepAbove) {
+    client.keepAbove = true;
+  }
+}
+var existing = workspace.windowList();
+for (var i = 0; i < existing.length; i++) applyTo(existing[i]);
+workspace.windowAdded.connect(applyTo);
+`
+
+// BrowserWindow.setAlwaysOnTop() is a documented no-op under native Wayland
+// (electron/electron#50403) — the Wayland protocol gives clients no way to
+// raise themselves, by design. On KDE Plasma (SteamOS Desktop Mode included)
+// the only way to actually get "always on top" back is a compositor-side
+// KWin script that forces `keepAbove` on our windows. This installs and
+// enables that script on first run — best-effort, silent, and a no-op
+// anywhere that isn't Linux+KWin (other Linux desktops have no equivalent
+// client-facing mechanism, so this intentionally doesn't try to cover them).
+function installLinuxKwinKeepAboveScript() {
+  if (process.platform !== 'linux') return
+  try {
+    const scriptDir = path.join(os.homedir(), '.local/share/kwin/scripts', KWIN_SCRIPT_ID)
+    const metadataPath = path.join(scriptDir, 'metadata.json')
+    const mainJsPath = path.join(scriptDir, 'contents/code/main.js')
+    const alreadyInstalled =
+      fs.existsSync(metadataPath) && fs.readFileSync(metadataPath, 'utf8') === KWIN_SCRIPT_METADATA &&
+      fs.existsSync(mainJsPath) && fs.readFileSync(mainJsPath, 'utf8') === KWIN_SCRIPT_MAIN_JS
+    if (!alreadyInstalled) {
+      fs.mkdirSync(path.join(scriptDir, 'contents/code'), { recursive: true })
+      fs.writeFileSync(metadataPath, KWIN_SCRIPT_METADATA)
+      fs.writeFileSync(mainJsPath, KWIN_SCRIPT_MAIN_JS)
+    }
+    execFile('kwriteconfig6', ['--file', 'kwinrc', '--group', 'Plugins', '--key', `${KWIN_SCRIPT_ID}Enabled`, 'true'], (err) => {
+      if (err) return // kwriteconfig6 missing => not a KDE session, nothing more to do
+      execFile('qdbus6', ['org.kde.KWin', '/KWin', 'org.kde.KWin.reconfigure'], () => {})
+    })
+  } catch (_) {}
 }
 
 // Plays a brief "pop in" on a freshly created window — fades opacity in and
@@ -1413,6 +1466,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
+  installLinuxKwinKeepAboveScript()
+
   const overlaySession = session.fromPartition('persist:overlay')
 
   function _relayOAuthUrl(url) {
