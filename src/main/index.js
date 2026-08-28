@@ -670,7 +670,7 @@ function setupAlwaysOnTopBehavior(win) {
     }
   })
   win.on('blur', () => {
-    if (!win.isDestroyed()) {
+    if (!win.isDestroyed() && !win.isMinimized()) {
       try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
     }
   })
@@ -1473,14 +1473,29 @@ ipcMain.on('renderer:mouseleave', (event) => {
   if (win) windowAnimators.get(win.id)?.setMouse(false)
 })
 
-// Every window here is alwaysOnTop, so minimizing just the one that was
-// clicked would leave every other overlay still covering the screen — the
-// desktop/taskbar would never actually become visible. Minimize them all
-// together instead, like clicking "Show Desktop" would.
-ipcMain.on('window:minimize', () => {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed() && !win.isMinimized()) win.minimize()
+// On Windows, alwaysOnTop windows still stack normally with the taskbar, so
+// minimizing just the clicked window is enough to reveal the desktop under
+// it. On mac/Linux, alwaysOnTop windows float above everything including
+// minimized windows/Show Desktop, so leaving the other overlays alwaysOnTop
+// would leave them still covering the screen — drop alwaysOnTop on the
+// window being minimized (and restore it on un-minimize) instead of pulling
+// every other overlay down with it.
+ipcMain.on('window:minimize', (event) => {
+  if (process.platform === 'win32') {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.isMinimized()) win.minimize()
+    }
+    return
   }
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || win.isDestroyed() || win.isMinimized()) return
+  try { win.setAlwaysOnTop(false) } catch (_) {}
+  win.minimize()
+  win.once('restore', () => {
+    if (!win.isDestroyed()) {
+      try { win.setAlwaysOnTop(true, 'screen-saver') } catch (_) {}
+    }
+  })
 })
 
 ipcMain.on('window:close', (event) => {
