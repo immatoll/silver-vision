@@ -645,14 +645,24 @@ function makeOverlayController(win, initialPinned = false, initialOpacityMin = 0
 //   • clicking it raises it above sibling overlay windows  (moveTop)
 //   • Windows OS won't silently clear the topmost flag     (re-assert on blur)
 function setupAlwaysOnTopBehavior(win) {
-  if (process.platform === 'darwin') {
+  // On mac/Linux, the default always-on-top level sits below a game running in
+  // borderless fullscreen (which claims the top of the stacking order for
+  // itself), so overlay windows never actually appear over it. Bumping to the
+  // 'screen-saver' level — the highest Electron exposes — fixes this on both
+  // platforms; on Wayland, compositor security policy still blocks apps from
+  // raising themselves over others, so this remains a known limitation there.
+  if (process.platform === 'darwin' || process.platform === 'linux') {
     try { win.setAlwaysOnTop(true, 'screen-saver') } catch (_) {}
+  }
+  if (process.platform === 'darwin') {
     try {
       win.setVisibleOnAllWorkspaces(true, {
         visibleOnFullScreen: true,
         skipTransientWindowStateRestoration: true
       })
     } catch (_) {}
+  } else if (process.platform === 'linux') {
+    try { win.setVisibleOnAllWorkspaces(true) } catch (_) {}
   }
   win.on('focus', () => {
     if (!win.isDestroyed()) {
@@ -661,7 +671,7 @@ function setupAlwaysOnTopBehavior(win) {
   })
   win.on('blur', () => {
     if (!win.isDestroyed()) {
-      try { win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'screen-saver' : undefined) } catch (_) {}
+      try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
     }
   })
 }
