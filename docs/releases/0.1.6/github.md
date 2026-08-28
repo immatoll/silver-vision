@@ -7,6 +7,9 @@ Electron's "always on top" doesn't work at all under native Wayland (a platform 
 
 If you're on an older install and don't want to update yet, run `scripts/install-kwin-keepabove.sh` once and relaunch the app to get the same fix.
 
+### Fixed: window opacity/fade not working on SteamOS / KDE Plasma
+Same underlying cause as the always-on-top issue: Electron's window opacity control is unsupported on Wayland, so the hover fade and opacity slider silently did nothing on Linux. Dynamic mouse-hover fading is disabled on Linux for now (windows stay at full visibility instead of dimming), but the opacity slider itself now works — it's applied statically through the same KWin-level mechanism as the always-on-top fix.
+
 ### Fixed: popups opening hidden behind their opener
 Several popups — the EVE Frontier login popup, EVE Vault login popup, OAuth popup, and keeper-driven EVE login popup — could each end up opening invisibly behind the window that spawned them, most often on macOS due to a timing race between the popup and its opener both claiming top position. All popup windows now match their opener's always-on-top level and the opener stops fighting them for top position while they're open.
 

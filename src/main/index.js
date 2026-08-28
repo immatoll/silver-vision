@@ -535,10 +535,25 @@ function makeOverlayController(win, initialPinned = false, initialOpacityMin = 0
   let pendingHide   = null
   let moveTimeout   = null
   let fadeTimer     = null
+  let lastLinuxOpacity = null
 
   const smoothstep = (t) => t * t * (3 - 2 * t)
 
   const animateTo = (target) => {
+    // BrowserWindow.setOpacity() is unsupported on Wayland (electron/electron#23922)
+    // — it's a silent no-op, so there's no way to drive a smooth animated fade
+    // there. Skip the mouse-leave dim entirely on Linux (see scheduleHide below)
+    // and just apply the configured "max opacity" once, statically, via the same
+    // KWin-scripting relay used for keepAbove — only when it actually changed,
+    // since animateTo also gets called on every mouse-move while the cursor is
+    // over the window.
+    if (process.platform === 'linux') {
+      if (lastLinuxOpacity === null || Math.abs(lastLinuxOpacity - target) >= 0.01) {
+        lastLinuxOpacity = target
+        applyLinuxWindowOpacity(win, target)
+      }
+      return
+    }
     if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null }
     if (win.isDestroyed()) return
     let start
@@ -566,6 +581,8 @@ function makeOverlayController(win, initialPinned = false, initialOpacityMin = 0
   }
 
   const scheduleHide = () => {
+    // No dynamic fade on Linux (see animateTo) — behave as if always pinned.
+    if (process.platform === 'linux') return
     if (isPinned || isMoving || isCollapsed || pendingHide) return
     pendingHide = setTimeout(() => {
       pendingHide = null
@@ -606,7 +623,7 @@ function makeOverlayController(win, initialPinned = false, initialOpacityMin = 0
     }, 60)
   }
 
-  try { win.setOpacity(OPACITY_ACTIVE) } catch (_) {}
+  if (process.platform === 'linux') { animateTo(OPACITY_ACTIVE) } else { try { win.setOpacity(OPACITY_ACTIVE) } catch (_) {} }
   startWatcher()
 
   return {
@@ -733,6 +750,56 @@ function installLinuxKwinKeepAboveScript() {
       execFile('qdbus6', ['org.kde.KWin', '/KWin', 'org.kde.KWin.reconfigure'], () => {})
     })
   } catch (_) {}
+}
+
+// Static per-window opacity for Linux/KWin, applied via a disposable KWin
+// script (same approach as installLinuxKwinKeepAboveScript above, but
+// one-shot instead of persistent) since BrowserWindow.setOpacity() is a
+// no-op on Wayland. Matches the window by resourceClass + bounds rather than
+// title — the window's title isn't set at construction time (overlay windows
+// pick it up later from the page's <title> once content loads), so matching
+// on it right after creation reliably finds nothing. Bounds are known
+// synchronously from win.getBounds() and compared with tolerance since KWin
+// reports fractional frameGeometry coordinates (Wayland scaling), not the
+// exact integers Electron uses.
+function applyLinuxWindowOpacity(win, opacity) {
+  if (process.platform !== 'linux' || win.isDestroyed()) return
+  let b
+  try { b = win.getBounds() } catch (_) { return }
+  const clamped = Math.max(0, Math.min(1, opacity))
+  // Position isn't a reliable match key — KWin's reported frameGeometry.x/y
+  // drifted by a different amount on every observed sample (window isn't
+  // necessarily at its final on-screen position yet when this is called),
+  // while width/height stayed exact. Match on size only.
+  const script = `var clients = workspace.windowList();
+var tw = ${b.width}, th = ${b.height};
+for (var i = 0; i < clients.length; i++) {
+  var c = clients[i];
+  if (c.resourceClass !== 'silvervision') continue;
+  var g = c.frameGeometry;
+  if (Math.abs(g.width - tw) <= 20 && Math.abs(g.height - th) <= 20) {
+    c.opacity = ${clamped};
+  }
+}
+`
+  const tmpPath = path.join(os.tmpdir(), `sv-opacity-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.js`)
+  const scriptName = `svopacity${Date.now()}${Math.random().toString(36).slice(2)}`
+  try {
+    fs.writeFileSync(tmpPath, script)
+  } catch (_) { return }
+  // KWin reads the script file lazily when run() is called, not when
+  // loadScript() returns — deleting the temp file right after loadScript
+  // (as an earlier version of this did) means run() finds it already gone
+  // (KWin.Scripting.FileError). Only clean up after run() has completed.
+  execFile('qdbus6', ['org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting.loadScript', tmpPath, scriptName], (err, stdout) => {
+    if (err) { fs.unlink(tmpPath, () => {}); return }
+    const id = String(stdout).trim()
+    if (!id) { fs.unlink(tmpPath, () => {}); return }
+    execFile('qdbus6', ['org.kde.KWin', `/Scripting/Script${id}`, 'run'], () => {
+      fs.unlink(tmpPath, () => {})
+      execFile('qdbus6', ['org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting.unloadScript', scriptName], () => {})
+    })
+  })
 }
 
 // Plays a brief "pop in" on a freshly created window — fades opacity in and
