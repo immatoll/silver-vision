@@ -746,6 +746,12 @@ function createMenu() {
         if (!win.isDestroyed()) win.destroy()
       }
       app.quit()
+    } else {
+      // The menu is the only way to open new windows, so if nothing else is
+      // left open there's no point staying alive — but the hidden keeper
+      // window (EVE Vault bridge) would otherwise block window-all-closed
+      // from firing, so check for visible windows explicitly.
+      quitIfNoVisibleWindows()
     }
   })
 }
@@ -1459,7 +1465,17 @@ app.whenReady().then(async () => {
   createMenu()
 })
 
-app.on('window-all-closed', () => app.quit())
+// window-all-closed doesn't fire while the hidden 1x1 keeper window (EVE
+// Vault extension bridge) is alive, since Electron counts it like any other
+// BrowserWindow even though it's never shown to the user. Quit as soon as no
+// *visible* window remains instead, so closing the last visible window (e.g.
+// the menu) actually ends the app rather than leaving it running invisibly.
+function quitIfNoVisibleWindows() {
+  const hasVisibleWindow = BrowserWindow.getAllWindows()
+    .some((win) => !win.isDestroyed() && win !== _keeperWindow)
+  if (!hasVisibleWindow) app.quit()
+}
+app.on('window-all-closed', quitIfNoVisibleWindows)
 
 // ---------------------------------------------------------------------------
 // IPC — Window controls
