@@ -671,6 +671,12 @@ function setupAlwaysOnTopBehavior(win) {
   })
   win.on('blur', () => {
     if (!win.isDestroyed() && !win.isMinimized()) {
+      // Skip reasserting if a child popup we spawned (e.g. an OAuth/login
+      // window opened from a vault action popup) is why we lost focus —
+      // otherwise this would win the always-on-top race back and bury the
+      // child window right after it opens.
+      const child = win._activeChildPopup
+      if (child && !child.isDestroyed()) return
       try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
     }
   })
@@ -2000,7 +2006,21 @@ function openExtensionWindow(url, opts = {}) {
     setupAlwaysOnTopBehavior(childWin)
     if (_oauthPopupWindow && !_oauthPopupWindow.isDestroyed()) { try { _oauthPopupWindow.close() } catch (_) {} }
     _oauthPopupWindow = childWin
-    childWin.on('closed', () => { if (_oauthPopupWindow === childWin) _oauthPopupWindow = null })
+    // The opener (e.g. the PIN popup) also has setupAlwaysOnTopBehavior, so
+    // losing focus to this child would otherwise trigger its blur handler to
+    // re-assert alwaysOnTop and win the race back above this freshly opened
+    // child, burying it. Mark the opener as having an active child so its
+    // blur handler skips reasserting while the child is open.
+    win._activeChildPopup = childWin
+    childWin.on('closed', () => {
+      if (_oauthPopupWindow === childWin) _oauthPopupWindow = null
+      if (win._activeChildPopup === childWin) {
+        win._activeChildPopup = null
+        if (!win.isDestroyed()) {
+          try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+        }
+      }
+    })
   })
   win.webContents.on('did-start-loading', () => {
     console.log('[SilverVision] vault window did-start-loading:', url)
