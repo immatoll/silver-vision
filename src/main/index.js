@@ -2178,8 +2178,28 @@ ipcMain.on('extension:openOAuthPopup', (event, url) => {
     }
   })
   _oauthPopupWindow.setMenu(null)
+  // Plain alwaysOnTop:true here only gets the default OS level, which loses
+  // to other overlay windows already bumped to 'screen-saver' via
+  // setupAlwaysOnTopBehavior (vault popup, menu, etc.) on mac/Linux — this
+  // window would then open invisibly behind them. Bump it to the same level.
+  setupAlwaysOnTopBehavior(_oauthPopupWindow)
+  if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed()) {
+    _vaultPopupWindow._activeChildPopup = _oauthPopupWindow
+    const openedWindow = _oauthPopupWindow
+    openedWindow.on('closed', () => {
+      if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed() && _vaultPopupWindow._activeChildPopup === openedWindow) {
+        _vaultPopupWindow._activeChildPopup = null
+        try { _vaultPopupWindow.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+      }
+    })
+  }
   _oauthPopupWindow.loadURL(url)
-  _oauthPopupWindow.once('ready-to-show', () => { _oauthPopupWindow.show(); _oauthPopupWindow.focus() })
+  _oauthPopupWindow.once('ready-to-show', () => {
+    try { _oauthPopupWindow.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+    _oauthPopupWindow.show()
+    _oauthPopupWindow.moveTop()
+    _oauthPopupWindow.focus()
+  })
   _oauthPopupWindow.on('closed', () => { _oauthPopupWindow = null })
 })
 
