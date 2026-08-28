@@ -2203,15 +2203,29 @@ app.on('browser-window-created', (_event, win) => {
       // they can never appear above the alwaysOnTop vault PIN popup that
       // triggered them, so they open invisibly behind it. Make them
       // alwaysOnTop too so normal z-ordering has them win on show/focus.
-      try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
-      setupAlwaysOnTopBehavior(win)
-      win.show(); win.moveTop(); win.focus()
+      // Mark the opener as having an active child BEFORE show()/focus() below,
+      // since those can synchronously fire the opener's blur handler on mac —
+      // if the guard isn't set yet at that point, the opener reasserts
+      // alwaysOnTop and wins the z-order race before we even get to it here.
       if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed()) {
         _vaultPopupWindow._activeChildPopup = win
         win.on('closed', () => {
           if (_vaultPopupWindow && !_vaultPopupWindow.isDestroyed() && _vaultPopupWindow._activeChildPopup === win) {
             _vaultPopupWindow._activeChildPopup = null
             try { _vaultPopupWindow.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+          }
+        })
+      }
+      try { win.setAlwaysOnTop(true, process.platform === 'win32' ? undefined : 'screen-saver') } catch (_) {}
+      setupAlwaysOnTopBehavior(win)
+      win.show(); win.moveTop(); win.focus()
+      // Belt-and-suspenders for mac: re-raise on the next tick in case the OS
+      // still resolved the opener's reassert after ours during this event.
+      if (process.platform === 'darwin') {
+        setImmediate(() => {
+          if (!win.isDestroyed()) {
+            try { win.setAlwaysOnTop(true, 'screen-saver') } catch (_) {}
+            try { win.moveTop() } catch (_) {}
           }
         })
       }
