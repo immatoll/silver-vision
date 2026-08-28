@@ -645,6 +645,15 @@ function makeOverlayController(win, initialPinned = false, initialOpacityMin = 0
 //   • clicking it raises it above sibling overlay windows  (moveTop)
 //   • Windows OS won't silently clear the topmost flag     (re-assert on blur)
 function setupAlwaysOnTopBehavior(win) {
+  if (process.platform === 'darwin') {
+    try { win.setAlwaysOnTop(true, 'screen-saver') } catch (_) {}
+    try {
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransientWindowStateRestoration: true
+      })
+    } catch (_) {}
+  }
   win.on('focus', () => {
     if (!win.isDestroyed()) {
       try { win.moveTop() } catch (_) {}
@@ -652,7 +661,7 @@ function setupAlwaysOnTopBehavior(win) {
   })
   win.on('blur', () => {
     if (!win.isDestroyed()) {
-      try { win.setAlwaysOnTop(true) } catch (_) {}
+      try { win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'screen-saver' : undefined) } catch (_) {}
     }
   })
 }
